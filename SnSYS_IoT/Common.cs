@@ -6,13 +6,15 @@ using System.Threading.Tasks;
 
 namespace SnSYS_IoT
 {
-    internal class IoTMessage
+    internal class Net2MqttMessage
     {
+        public string CMD { get; set; }
         public string IP { get; set; }
         public int Port { get; set; }
         public string Payload { get; set; }
-        public IoTMessage(string IPaddress, int portNum, string payload)
+        public Net2MqttMessage(string command, string IPaddress, int portNum, string payload)
         {
+            this.CMD = command;
             this.IP = IPaddress;
             this.Port = portNum;
             this.Payload = payload;

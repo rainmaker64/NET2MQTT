@@ -16,15 +16,30 @@ namespace SnSYS_IoT
     {
         private string _connectionString;
         private DeviceClient? s_deviceClient;
-        private BufferBlock<string> _iotHubRxBuffer;
         private CancellationTokenSource _task_cts;
         private Task _c2dMsgTask;
 
+        public class IoTMessageEventArgs
+        {
+            public string MessageID { get; set; }
+            public string Message { get; }
+            public IoTMessageEventArgs(string messageID, string message)
+            {
+                MessageID = messageID;
+                Message = message;
+            }
+        }
+
+        public delegate void IoTMessageEventHandler(object sender, IoTMessageEventArgs e);
+
+        public event IoTMessageEventHandler? IoTMessageEvent;
+
         public IoTVessel(string connectionString)
         {
-            _connectionString = connectionString;
-            _iotHubRxBuffer = new BufferBlock<string>();
-            _task_cts = new CancellationTokenSource();
+            this._connectionString = connectionString;
+            this._task_cts = new CancellationTokenSource();
+            this.IoTMessageEvent = null;
+
             _c2dMsgTask = new Task(async () => await iotC2DMsgProcess(_task_cts));
         }
 
@@ -57,17 +72,6 @@ namespace SnSYS_IoT
         {
             _task_cts.Cancel();
             _c2dMsgTask.Wait();
-        }
-
-        public void ClearBuffer()
-        {
-            IList<string> itemsList;
-            _iotHubRxBuffer.TryReceiveAll(out itemsList);
-        }
-
-        public string GetTelemetry()
-        {
-            return _iotHubRxBuffer.Receive();
         }
 
         public async Task<int> PutTelemetryAsync(string telemetry)
@@ -110,7 +114,9 @@ namespace SnSYS_IoT
                         var msg = await s_deviceClient.ReceiveAsync();
 
                         if (msg != null) {
-                            _iotHubRxBuffer.Post<string>(Encoding.ASCII.GetString(msg.GetBytes()));
+                            if (this.IoTMessageEvent != null) {
+                                this.IoTMessageEvent(this, new IoTMessageEventArgs(msg.MessageId, Encoding.ASCII.GetString(msg.GetBytes())));
+                            }
                             await s_deviceClient.CompleteAsync(msg);
                         }
                     }

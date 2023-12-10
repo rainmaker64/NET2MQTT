@@ -1,15 +1,30 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.Azure.Amqp.Framing;
 using SnSYS_IoT;
 
 namespace NetGent_F
 {
+    public class TcpInfoF {
+        public TcpListener Listener { get; set; }
+        public TcpClient Client { get; set; }
+        public NetworkStream Stream { get; set; }
+        public bool IsRun { get; set; }
+        public TcpInfoF() {
+            this.Listener = null;
+            this.Client = null;
+            this.Stream = null;
+            this.IsRun = false;
+        }
+    }
+
     /// <summary>
     /// Network Agent in Fleet Side
     /// Provide TCP Socket Client. It will send connection request to "GITOS" when it get the trigger from "GITOS".
@@ -25,16 +40,16 @@ namespace NetGent_F
 
         const string AzureDeviceConnectionString = "HostName=airgazerIoT.azure-devices.net;DeviceId=testVehicle01;SharedAccessKey=gHsfleh0PJvQ2B6TQyKgzHXx/0s5NnsXxULJzmNMAro=";
 
-        private Dictionary<string, Socket?> tcpClientList;
+        private Dictionary<string, TcpInfoF> tcpList;
         private IoTFleet fleetTwin;
-        private CancellationTokenSource? taskTokenSrc;
+        private CancellationTokenSource taskTokenSrc;
         private bool isStarted;
 
         public NetGent_F()
         {
             this.isStarted = false;
-            this.taskTokenSrc = null;
-            this.tcpClientList = new Dictionary<string, Socket?>();
+            this.taskTokenSrc = new CancellationTokenSource();
+            this.tcpList = new Dictionary<string, TcpInfoF>();
 
             var connectionString = string.Format($"HostName={AzureHostName};SharedAccessKeyName={SASKeyName};SharedAccessKey={SASKey}");
 
@@ -55,11 +70,6 @@ namespace NetGent_F
                 {
                     ret = fleetTwin.Connect2Cloud();
                     this.isStarted = (ret == 1) ? true : false;
-
-                    if (this.isStarted == true && this.taskTokenSrc == null)
-                    {
-                        this.taskTokenSrc = new CancellationTokenSource();
-                    }
                 }
             }
 
@@ -84,62 +94,58 @@ namespace NetGent_F
                 this.taskTokenSrc.Cancel();
             }
 
-            foreach (var item in this.tcpClientList)
-            {
-                var socket = item.Value;
-                if (socket != null)
-                {
-                    socket.Close(1000);
-                }
-            }
-
             return ret;
         }
 
         /// <summary>
-        /// Add TCP Client into a client list.
+        /// Create TCP Server
         /// </summary>
-        public int AddTcpClient(string IPaddress, int portNum)
+        public int CreateTcpServer(string ip, int port)
         {
             int ret = 0;
 
-            if (string.IsNullOrEmpty(IPaddress) == false && this.isStarted == false)
+            var tcpinfo = AddTcpListener(ip, port);
+
+            if (tcpinfo != null)
             {
-                var IPPort = IPaddress + ":" + portNum;
-                var serversocket = CreateTcpSocketClients(IPaddress, portNum);
-
-                ret = (tcpClientList.TryAdd(IPPort, serversocket) == false) ? -1 : 1;
-
-                if (ret == 1 && serversocket != null && this.taskTokenSrc != null)
+                Task.Factory.StartNew(() =>
                 {
-                    Task.Factory.StartNew(() =>
-                    {
-                        Socket thisSocket = serversocket;
-                        string thisIP = IPaddress;
-                        int thisPort = portNum;
-                        byte[] indata = new byte[1024];
-
-                        while( true )
-                        {
-                            int nbytes = thisSocket.Receive(indata);
-
-                            if (nbytes > 0)
-                            {
-                                int ret = SendNet2MqttMessage(thisIP, thisPort, indata, nbytes);
-                            }
-                        }
-                    }, this.taskTokenSrc.Token);
-                }
+                    RunTcpListener(tcpinfo, ip, port);
+                }, taskTokenSrc.Token);
             }
 
             return ret;
         }
 
-
         /// <summary>
-        /// Delete TCP Client from a client list
+        /// Kill TCP Server
         /// </summary>
-        public int DelTcpClient(string IPaddress, int portNum)
+        public int KillTcpServer(string ip, int port)
+        {
+            return RemoveTcpListener(ip, port);
+        }
+
+        private TcpInfoF AddTcpListener(string IPaddress, int portNum)
+        {
+            TcpInfoF tcpInfo = null;
+
+            if (string.IsNullOrEmpty(IPaddress) == false)
+            {
+                tcpInfo = new TcpInfoF();
+                var IPPort = IPaddress + ":" + portNum;
+                IPAddress IP = IPAddress.Parse(IPaddress);
+                tcpInfo.Listener = new TcpListener(IP, portNum);
+
+                if (tcpList.TryAdd(IPPort, tcpInfo) == false)
+                {
+                    tcpList.TryGetValue(IPPort, out tcpInfo);
+                }
+            }
+
+            return tcpInfo;
+        }
+
+        private int RemoveTcpListener(string IPaddress, int portNum)
         {
             int ret = 0;
 
@@ -147,41 +153,80 @@ namespace NetGent_F
             {
                 var IPPort = IPaddress + ":" + portNum;
 
-                if (tcpClientList.TryGetValue(IPPort, out var serversocket) == true)
+                if (tcpList.TryGetValue(IPPort, out var tcpInfo) == true)
                 {
-                    if (serversocket != null)
+                    if (tcpInfo != null && tcpInfo.IsRun == true)
                     {
-                        serversocket.Close(1000);   // timeout = 1sec.
+                        tcpInfo.Listener.Stop();
+                        tcpInfo.Client.Close();
                     }
-                    ret = (tcpClientList.Remove(IPPort) == false) ? -1 : 1;
+
+                    ret = tcpList.Remove(IPPort) == true ? 1 : -1;
                 }
             }
 
             return ret;
         }
 
-        private Socket? CreateTcpSocketClients(string ip, int port)
+        private void RunTcpListener(TcpInfoF tcpInfo, string IPaddress, int portNumber)
         {
-            Socket? clientSocket = null;
+            RunTcpListener(tcpInfo,IPaddress + ":" + portNumber);
+        }
 
-            IPEndPoint ipep = new IPEndPoint(IPAddress.Parse(ip), port);
-
-            if (ipep != null)
+        private void RunTcpListener(TcpInfoF tcpInfo, string IPPort)
+        {
+            if (tcpInfo != null && tcpInfo.Listener != null)
             {
-                clientSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                Task tcpRecieverTask;
 
-                try
+                while (true)
                 {
-                    clientSocket.Connect(ipep);
+                    try
+                    {
+                        tcpInfo.Listener.Start();
+                        Console.WriteLine("Waiting for connection...");
+                        tcpInfo.Client = tcpInfo.Listener.AcceptTcpClient();
+                        Console.WriteLine("Connected...");
+                        tcpInfo.Stream = tcpInfo.Client.GetStream();
+                        tcpInfo.IsRun = true;
+
+                        tcpRecieverTask = new Task(() => TcpClientReceiver(tcpInfo.Stream, IPPort), taskTokenSrc.Token);
+                        tcpRecieverTask.Start();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Exception = {ex.Message}");
+                        tcpInfo.IsRun = false;
+                        break;
+                    }
                 }
-                catch (Exception ex)
+            }
+        }
+
+        private void TcpClientReceiver(NetworkStream stream, string IPPort)
+        {
+            if (stream != null)
+            {
+                byte[] buffer = new byte[1024];
+
+                while (true)
                 {
-                    Console.WriteLine("Exception: can't connect to the server");
-                    clientSocket = null;
+                    try
+                    {
+                        var ndata = stream.Read(buffer, 0, buffer.Length);
+                        Console.WriteLine($"Number of Data = {ndata}");
+                        var rxstring = System.Text.Encoding.ASCII.GetString(buffer, 0, ndata);
+                        Console.WriteLine("Received: {0} from {1}", rxstring, IPPort);
+                    }
+                    catch (IOException ex)
+                    {
+                        Console.WriteLine($"Exception: {ex}");
+                        break;
+                    }
                 }
             }
 
-            return clientSocket;
+            Console.WriteLine("TcpClientReceiver finished");
         }
 
         public void Dispose()

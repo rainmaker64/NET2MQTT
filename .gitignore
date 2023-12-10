@@ -30,3 +30,10 @@
 *.exe
 *.out
 *.app
+/NET2MQTT_console/.vs/NET2MQTT_console/FileContentIndex
+/NET2MQTT_console/NetGent_F/obj/Debug/net6.0
+/NET2MQTT_console/NetGent_F/obj
+/NET2MQTT_console/NetGent_V/obj/Debug/net6.0
+/NET2MQTT_console/NetGent_V/obj
+/SnSYS_IoT/obj
+/UnitTestApp/obj

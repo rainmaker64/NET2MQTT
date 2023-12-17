@@ -6,50 +6,43 @@ using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using SnSYS_IoT;
+using Newtonsoft.Json;
+using Microsoft.Azure.Amqp.Framing;
+using System.IO;
 
 namespace NetGent_V
 {
-    public class TcpInfoV
+    internal class VesselNetAgent
     {
-        public TcpClient Client { get; set; }
-        public NetworkStream Stream { get; set; }
-        public IPEndPoint IPServerEP { get; set; }
-        public bool IsRun { get; set; }
-        public TcpInfoV(string ip, int port)
-        {
-            this.Stream = null;
-            this.IsRun = false;
-
-            IPAddress serverAddr = IPAddress.Parse(ip);
-            this.IPServerEP = new IPEndPoint(serverAddr, port);
-            this.Client = new TcpClient();
-        }
-    }
-
-    internal class NetGent_V
-    {
-        const string AzureHostName = "airgazerIoT.azure-devices.net";
-        const string AzureEventHubEP = "sb://iothub-ns-airgazerio-24368083-52e3bbdbc1.servicebus.windows.net/";
-        const string AzureEventHubPath = "airgazeriot";
-
-        const string SASKey = "IoguqxF4OBoCUenJN1ZC5kOP2rnuo4lp9KeeyC49O64=";
-        const string SASKeyName = "iothubowner";
-
         const string AzureDeviceConnectionString = "HostName=airgazerIoT.azure-devices.net;DeviceId=testVehicle01;SharedAccessKey=gHsfleh0PJvQ2B6TQyKgzHXx/0s5NnsXxULJzmNMAro=";
+
+        public delegate void TcpReceiveEventHandler(object sender, Net2MqttMessage e);
+        public event TcpReceiveEventHandler? TcpReceiveEvent;
 
         private Dictionary<string, TcpInfoV> tcpList;
         private IoTVessel vesselTwin;
         private CancellationTokenSource taskTokenSrc;
         private bool isStarted;
 
-        public NetGent_V()
+        public VesselNetAgent()
         {
             this.isStarted = false;
             this.taskTokenSrc = null;
             this.tcpList = new Dictionary<string, TcpInfoV>();
+            this.TcpReceiveEvent = null;
 
             this.vesselTwin = new IoTVessel(AzureDeviceConnectionString);
             this.vesselTwin.IoTMessageEvent += VesselTwin_IoTMessageEvent;
+        }
+
+        public void Add_IoTMessageEvent(IoTVessel.IoTMessageEventHandler eventhandler)
+        {
+            this.vesselTwin.IoTMessageEvent += eventhandler;
+        }
+
+        public void Delete_IoTMessageEvent(IoTVessel.IoTMessageEventHandler eventhandler)
+        {
+            this.vesselTwin.IoTMessageEvent -= eventhandler;
         }
 
         /// <summary>
@@ -103,29 +96,33 @@ namespace NetGent_V
         public int CreateTcpClient(string ip, int port)
         {
             int ret = 0;
-            Task tcpRecieverTask;
+            string errorString = string.Empty;
             var tcpInfo = AddTcpClient(ip, port);
 
-            if (tcpInfo != null)
-            {
-                try
-                {
+            if (tcpInfo != null) {
+                try {
                     // try to connect to the host
                     tcpInfo.Client.Connect(tcpInfo.IPServerEP);
                     tcpInfo.Stream = tcpInfo.Client.GetStream();
-
-                    // bring up the receiver task.
-                    tcpRecieverTask = new Task(() => TcpClientReceiver(tcpInfo.Stream, ip + ":" + port), taskTokenSrc.Token);
-                    tcpRecieverTask.Start();
-
+                    tcpInfo.IsRun = true;
                 }
-                catch (ArgumentNullException e)
-                {
-                    Console.WriteLine("ArgumentNullException: {0}", e);
+                catch (ArgumentNullException e) {
+                    tcpInfo.IsRun = false;
+                    errorString = e.Message;
                 }
-                catch (SocketException e)
-                {
-                    Console.WriteLine("SocketException: {0}", e);
+                catch (SocketException e) {
+                    tcpInfo.IsRun = false;
+                    errorString = e.Message;
+                }
+                finally {
+                    if (tcpInfo.IsRun == true) {
+                        var tcpRecieverTask = new Task(() => TcpClientReceiver(tcpInfo), taskTokenSrc.Token);
+                        tcpRecieverTask.Start();
+                        ret = 1;
+                    }
+                    else {
+                        Console.WriteLine($"Error: {errorString}");
+                    }
                 }
             }
 
@@ -166,29 +163,49 @@ namespace NetGent_V
             return RemoveTcpClient(ip, port);
         }
 
-        private void TcpClientReceiver(NetworkStream stream, string IPPort)
+        public void Dispose()
         {
-            if (stream != null)
+            this.Stop();
+            if (this.taskTokenSrc != null)
+            {
+                this.taskTokenSrc.Dispose();
+            }
+        }
+
+        /*
+         * 
+         */
+
+        private async void TcpClientReceiver(TcpInfoV tcpInfo)
+        {
+            if (tcpInfo != null && tcpInfo.Stream != null)
             {
                 byte[] buffer = new byte[1024];
-
-                while (true)
+                while (tcpInfo.IsRun == true)
                 {
                     try
                     {
-                        var ndata = stream.Read(buffer, 0, buffer.Length);
-                        Console.WriteLine($"Number of Data = {ndata}");
+                        var ndata = tcpInfo.Stream.Read(buffer, 0, buffer.Length);
                         var rxstring = System.Text.Encoding.ASCII.GetString(buffer, 0, ndata);
-                        Console.WriteLine("Received: {0} from {1}", rxstring, IPPort);
+                        if (this.TcpReceiveEvent != null)
+                        {
+                            this.TcpReceiveEvent(this, new Net2MqttMessage(string.Empty, tcpInfo.IP, tcpInfo.Port, rxstring));
+                        }
+
+#if false
+                        var ret = await SendNet2MqttMessage(tcpInfo.IP, tcpInfo.Port, rxstring);
+#else
+                        var ret = await SendNet2MqttMessage(tcpInfo.IP, 130000, rxstring);
+#endif
                     }
                     catch (IOException ex)
                     {
                         Console.WriteLine($"Exception: {ex}");
+                        RemoveTcpClient(tcpInfo.IP, tcpInfo.Port);
                         break;
                     }
                 }
             }
-
             Console.WriteLine("TcpClientReceiver finished");
         }
 
@@ -230,26 +247,92 @@ namespace NetGent_V
             return ret;
         }
 
-
-        public void Dispose()
-        {
-            this.Stop();
-            if (this.taskTokenSrc != null)
-            {
-                this.taskTokenSrc.Dispose();
-            }
-        }
-
-        private int SendNet2MqttMessage(string IP, int portNum, byte[] payload, int ndata)
+        private async Task<int> SendNet2MqttMessage(string IP, int portNum, string payload)
         {
             int ret = 0;
+
+            if (this.vesselTwin != null)
+            {
+                var netMsg = new Net2MqttMessage(string.Empty, IP, portNum, payload);
+                ret = await this.vesselTwin.PutTelemetryAsync(JsonConvert.SerializeObject(netMsg));
+            }
 
             return ret;
         }
 
-        private void VesselTwin_IoTMessageEvent(object sender, IoTVessel.IoTMessageEventArgs e)
+        private async Task<int> SendNet2MqttMessage(string IP, int portNum, byte[] payload, int ndata)
         {
-            Console.WriteLine($"{e.MessageID} sent {e.Message}");
+            int ret = 0;
+
+            if (this.vesselTwin != null)
+            {
+                var netMsg = new Net2MqttMessage(string.Empty, IP, portNum, System.Text.Encoding.Default.GetString(payload));
+                ret = await this.vesselTwin.PutTelemetryAsync(JsonConvert.SerializeObject(netMsg));
+            }
+
+            return ret;
+        }
+
+        private async void VesselTwin_IoTMessageEvent(object sender, IoTVessel.IoTMessageEventArgs evt)
+        {
+            Task tcpRecieverTask;
+            string errorString = string.Empty;
+            var net2mqtt = JsonConvert.DeserializeObject<Net2MqttMessage>(evt.Message);
+
+            if (net2mqtt != null) {
+                TcpInfoV tcpInfo;
+#if true
+                net2mqtt.Port = 13001;
+#endif
+                string IPPort = string.Format($"{net2mqtt.IP}:{net2mqtt.Port}");
+
+                if (tcpList.TryGetValue(IPPort, out tcpInfo) == false) {
+                    tcpInfo = AddTcpClient(net2mqtt.IP, net2mqtt.Port);
+                }
+
+                if (tcpInfo.IsRun == false) { 
+                    tcpInfo.Client = new TcpClient();
+                    try {
+                        await tcpInfo.Client.ConnectAsync(tcpInfo.IPServerEP);
+                        tcpInfo.Stream = tcpInfo.Client.GetStream();
+                        tcpInfo.IsRun = true;
+                        errorString = string.Empty;
+                    }
+                    catch (ArgumentNullException ex) {
+                        errorString = ex.Message;
+                        tcpInfo.IsRun = false;
+                    }
+                    catch (SocketException ex) {
+                        errorString = ex.Message;
+                        tcpInfo.IsRun = false;
+                    }
+                    catch (Exception ex) {
+                        errorString = ex.Message;
+                        tcpInfo.IsRun = false;
+                    }
+                    finally {
+                        if (tcpInfo.IsRun == true) {
+                            // bring up the receiver task.
+                            tcpRecieverTask = new Task(() => TcpClientReceiver(tcpInfo), taskTokenSrc.Token);
+                            tcpRecieverTask.Start();
+                        }
+                        else {
+                            Console.WriteLine($"Error: {errorString}");
+                        }
+                    }
+                }
+
+                if (tcpInfo.IsRun == true) {
+                    Byte[] bytesbuffer = System.Text.Encoding.ASCII.GetBytes(net2mqtt.Payload);
+                    try {
+                        tcpInfo.Stream.Write(bytesbuffer, 0, bytesbuffer.Length);
+                    }
+                    catch (Exception ex) {
+                        tcpInfo.IsRun = false;
+                        Console.WriteLine($"Error: {ex.Message}");
+                    }
+                }
+            }
         }
     }
 }

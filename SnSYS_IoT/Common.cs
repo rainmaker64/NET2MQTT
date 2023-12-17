@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace SnSYS_IoT
 {
-    internal class Net2MqttMessage
+    public class Net2MqttMessage
     {
         public string CMD { get; set; }
         public string IP { get; set; }

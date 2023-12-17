@@ -21,6 +21,7 @@ int ret = fleetTwin.Connect2Cloud();
 Console.WriteLine($"Fleet connected to Cloud = {ret}");
 
 var vesselTwin = new IoTVessel(AzureDeviceConnectionString);
+vesselTwin.IoTMessageEvent += VesselTwin_IoTMessageEvent;
 ret = vesselTwin.Open();
 Console.WriteLine($"Create Vessel Twin: {ret}");
 
@@ -31,8 +32,12 @@ if (ret > 0)
         while(true)
         {
             await vesselTwin.PutTelemetryAsync(String.Format($"Message #{count}"));
-            Console.WriteLine(String.Format($"Message #{count}"));
+            //Console.WriteLine(String.Format($"Message #{count}"));
+
+            Byte[] buffer = System.Text.Encoding.ASCII.GetBytes($"SOS{count}....");
+            await fleetTwin.SendTelemetry2Vessel("testVehicle01", buffer);
             count++;
+            Thread.Sleep(1000);
         }
     });
 }
@@ -41,4 +46,9 @@ Console.ReadLine();
 void FleetTwin_IoTMessageEvent(object sender, IoTFleet.IoTMessageEventArgs e)
 {
     Console.WriteLine($"{e.DeviceID} sent {e.Message}");
+}
+
+void VesselTwin_IoTMessageEvent(object sender, IoTVessel.IoTMessageEventArgs e)
+{
+    Console.WriteLine($"A Fleet sent {e.Message}");
 }

@@ -3,6 +3,7 @@ using Microsoft.Azure.Devices.Common.Exceptions;
 using Microsoft.Azure.Devices.Shared;
 using Microsoft.Azure.EventHubs;
 using System.Text;
+using System.Threading;
 
 namespace SnSYS_IoT
 {
@@ -136,7 +137,8 @@ namespace SnSYS_IoT
                         iotFleetTasks = new List<Task>();
                         foreach (string partition in d2cPartitions)
                         {
-                            iotFleetTasks.Add(D2CMsgProcess(partition, iotFleetTaskCTS.Token));
+                            var eventHubReceiver = s_eventHubClient.CreateReceiver("$Default", partition, EventPosition.FromEnqueuedTime(DateTime.Now));
+                            iotFleetTasks.Add(D2CMsgProcess(eventHubReceiver, iotFleetTaskCTS.Token));
                         }
                     }
                     else
@@ -325,43 +327,97 @@ namespace SnSYS_IoT
 
         #endregion
 
-        public int Call2Vessel()
+        /// <summary>
+        /// Call Direct Call to a vessel
+        /// </summary>
+        /// <param name="vesselName"></param>
+        /// <param name="commandName"></param>
+        /// <param name="payloadJson"></param>
+        /// <param name="timeout"></param>
+        /// <returns></returns>
+        public async Task<int> Call2Vessel(string vesselName, string commandName, string payloadJson, double timeout = 30)
         {
             int ret = 0;
+            CloudToDeviceMethodResult response;
+
+            if (s_serviceClient != null)
+            {
+                // Create the invoke method
+                var method = new CloudToDeviceMethod(commandName) { ResponseTimeout = TimeSpan.FromSeconds(timeout) };
+                if (payloadJson != null && payloadJson != string.Empty)
+                {
+                    method.SetPayloadJson(payloadJson);
+                }
+
+                try
+                {
+                    response = await s_serviceClient.InvokeDeviceMethodAsync(vesselName, method);
+                    ret = response.Status;
+                }
+                catch (Exception ex)
+                {
+                    ret = -1;
+                }
+
+            }
 
             return ret;
         }
 
-        public int SendTelemetry2Vessel()
+        /// <summary>
+        /// Send Telemetry to a Vessel
+        /// </summary>
+        /// <param name="vesselName"></param>
+        /// <param name="msg"></param>
+        /// <returns></returns>
+        public async Task<int> SendTelemetry2Vessel(string vesselName, string msg)
         {
             int ret = 0;
+            if (string.IsNullOrEmpty(vesselName) == false && string.IsNullOrEmpty(msg) == false)
+            {
+                ret = await SendTelemetry2Vessel(vesselName, System.Text.Encoding.ASCII.GetBytes(msg));
+            }
 
             return ret;
         }
 
-        private async Task D2CMsgProcess(string partition, CancellationToken ct)
+        /// <summary>
+        /// Send Telemetry Message to a Vessel
+        /// </summary>
+        /// <param name="vesselName"></param>
+        /// <param name="payload"></param>
+        /// <returns></returns>
+        public async Task<int> SendTelemetry2Vessel(string vesselName, byte[] payload)
+        {
+            int ret = 0;
+
+            if (s_serviceClient != null && string.IsNullOrEmpty(vesselName) == false && payload != null)
+            {
+                try
+                {
+                    await s_serviceClient.SendAsync(vesselName, new Message(payload));
+                    ret = 1;
+                }
+                catch (Exception ex)
+                {
+                    ret = -1;
+                }
+            }
+
+            return ret;
+        }
+
+        private async Task D2CMsgProcess( PartitionReceiver eventHubReceiver, CancellationToken ct)
         {
             string? deviceID;
             string? telemetry;
             IEnumerable<EventData> events;
 
-            if (s_eventHubClient == null)
+            while (ct.IsCancellationRequested == false)
             {
-                return;
-            }
-
-            var eventHubReceiver = s_eventHubClient.CreateReceiver("$Default", partition, EventPosition.FromEnqueuedTime(DateTime.Now));
-
-            while (true)
-            {
-                if (ct.IsCancellationRequested == true)
-                {
-                    break;
-                }
-
                 try
                 {
-                    events = await eventHubReceiver.ReceiveAsync(100);
+                    events = await eventHubReceiver.ReceiveAsync(10);
                 }
                 catch (Exception e)
                 {
@@ -381,9 +437,7 @@ namespace SnSYS_IoT
                         {
                             deviceID = string.Empty;
                         }
-
                         telemetry = (eventData.Body.Array != null && eventData.Body.Array.Length == 0) ? string.Empty:Encoding.UTF8.GetString(eventData.Body.Array);
-
                         if (this.IoTMessageEvent != null && string.IsNullOrEmpty(deviceID) == false && string.IsNullOrEmpty(telemetry) == false)
                         {
                             this.IoTMessageEvent(this, new IoTMessageEventArgs(deviceID, telemetry));

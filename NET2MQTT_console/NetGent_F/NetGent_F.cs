@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using Microsoft.Azure.Amqp.Framing;
 using Newtonsoft.Json;
 using SnSYS_IoT;
@@ -88,6 +89,18 @@ namespace NetGent_F
             {
                 this.taskTokenSrc.Cancel();
             }
+
+            return ret;
+        }
+
+        public async Task<int> DirectCall2Vessel(string vesselName, string commandName, string payloadJson, double timeout = 30)
+        {
+            int ret = 0;
+            string response;
+
+            (ret, response) = await this.fleetTwin.Call2Vessel(vesselName, commandName, payloadJson, timeout);
+
+            Console.WriteLine($"DirectCall: ret = {ret}, response = {response}");
 
             return ret;
         }
@@ -225,27 +238,55 @@ namespace NetGent_F
 
         private async void TcpClientReceiver(TcpInfoF tcpInfo)
         {
+            int ret = 0;
+
             if (tcpInfo != null && tcpInfo.IsRun == true && tcpInfo.Stream != null)
             {
+                int ndata;
                 byte[] buffer = new byte[1024];
 
                 while (tcpInfo.IsRun == true)
                 {
+                    ndata = 0;
                     try
                     {
-                        var ndata = tcpInfo.Stream.Read(buffer, 0, buffer.Length);
-                        var rxstring = System.Text.Encoding.ASCII.GetString(buffer, 0, ndata);
-                        var ret = await SendNet2MqttMessage(tcpInfo.IP, tcpInfo.Port, rxstring);
-                        if (this.TcpReceiveEvent != null)
-                        {
-                            this.TcpReceiveEvent(this, new Net2MqttMessage(string.Empty, tcpInfo.IP, tcpInfo.Port, rxstring));
-                        }
+                        ndata = tcpInfo.Stream.Read(buffer, 0, buffer.Length);
                     }
                     catch (IOException ex)
                     {
                         Console.WriteLine($"Exception = {ex}");
                         tcpInfo.IsRun = false;
                         break;
+                    }
+
+                    var rxstring = System.Text.Encoding.ASCII.GetString(buffer, 0, ndata);
+                    if ( ndata > 0 && string.IsNullOrEmpty(rxstring) == false)
+                    {
+                        // Check if it is http response
+                        if (tcpInfo.Port == 80 || tcpInfo.Port == 8080)
+                        {
+                            var lines = rxstring.Split(new string[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+                            var httpCmd = HandleHttpCommand(lines);
+                            if (httpCmd != null)
+                            {
+                                Console.WriteLine($"CMD: {httpCmd.Command}");
+                                Console.WriteLine($"PARAM: {httpCmd.Param}");
+                                Console.WriteLine($"HTTP VERSION: {httpCmd.HttpVersion}");
+                                Console.WriteLine($"Connection: {httpCmd.Connection}");
+                                Console.WriteLine($"Host: {httpCmd.Host}");
+
+                                /// Call IoT Direct Call to get the data from the remote HTTP Server.
+                            }
+                        }
+                        else
+                        {
+                            ret = await SendNet2MqttMessage(tcpInfo.IP, tcpInfo.Port, rxstring);
+                        }
+
+                        if (this.TcpReceiveEvent != null)
+                        {
+                            this.TcpReceiveEvent(this, new Net2MqttMessage(string.Empty, tcpInfo.IP, tcpInfo.Port, rxstring));
+                        }
                     }
                 }
             }
@@ -261,6 +302,7 @@ namespace NetGent_F
                 this.taskTokenSrc.Dispose();
             }
         }
+
 
         private async Task<int> SendNet2MqttMessage(string IP, int portNum, string payload)
         {
@@ -289,5 +331,70 @@ namespace NetGent_F
 
             return ret;
         }
+        #region HTTP
+        private string[] ParseHttpResponse(string response)
+        {
+            if (string.IsNullOrEmpty(response) == false)
+            {
+                string[] lines = response.Split(new string[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+
+                foreach (var line in lines)
+                {
+                    Console.WriteLine(line);
+                }
+
+                return lines;
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        private HttpCommand HandleHttpCommand(string[] lines)
+        {
+            HttpCommand httpCmd = new HttpCommand();
+
+            if (lines != null && lines.Length > 0)
+            {
+                foreach (var line in lines)
+                {
+                    Console.WriteLine(line);
+                    string[] words = line.Split(new string[] { " ", "\t" }, StringSplitOptions.None);
+
+                    if (words != null && words.Length > 0)
+                    {
+                        switch (words[0])
+                        {
+                            case "HEAD":
+                            case "GET":
+                                if (words.Length > 2)
+                                {
+                                    httpCmd.Command = words[0];
+                                    httpCmd.Param = words[1];
+                                    httpCmd.HttpVersion = words[2];
+                                }
+                                break;
+                            case "host:":
+                            case "Host:":
+                                if (words.Length > 1)
+                                {
+                                    httpCmd.Host = words[1];
+                                }
+                                break;
+                            case "Connection:":
+                            case "connection:":
+                                if (words.Length > 1)
+                                {
+                                    httpCmd.Connection = words[1];
+                                }
+                                break;
+                        }
+                    }
+                }
+            }
+            return httpCmd;
+        }
+        #endregion
     }
 }

@@ -335,9 +335,10 @@ namespace SnSYS_IoT
         /// <param name="payloadJson"></param>
         /// <param name="timeout"></param>
         /// <returns></returns>
-        public async Task<int> Call2Vessel(string vesselName, string commandName, string payloadJson, double timeout = 30)
+        public async Task<(int, string)> Call2Vessel(string vesselName, string commandName, string payloadJson, double timeout = 30)
         {
             int ret = 0;
+            string stringResponse = string.Empty;
             CloudToDeviceMethodResult response;
 
             if (s_serviceClient != null)
@@ -352,6 +353,7 @@ namespace SnSYS_IoT
                 try
                 {
                     response = await s_serviceClient.InvokeDeviceMethodAsync(vesselName, method);
+                    stringResponse = response.GetPayloadAsJson();
                     ret = response.Status;
                 }
                 catch (Exception ex)
@@ -361,7 +363,7 @@ namespace SnSYS_IoT
 
             }
 
-            return ret;
+            return (ret, stringResponse);
         }
 
         /// <summary>

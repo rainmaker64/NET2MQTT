@@ -8,7 +8,15 @@ var netagent_fleet = new FleetNetAgent("testVehicle01");
 netagent_fleet.Add_IoTMessageEvent(FleetTwin_IoTMessageEvent);
 netagent_fleet.TcpReceiveEvent += FleetTwin_TcpRxEvent;
 netagent_fleet.Start();
-netagent_fleet.CreateTcpServer("127.0.0.1", 13000);
+//netagent_fleet.CreateTcpServer("127.0.0.1", 80);
+
+Console.ReadLine();
+
+await netagent_fleet.DirectCall2Vessel("testVehicle01", "GetFileSize", string.Empty);
+
+Console.ReadLine();
+
+await netagent_fleet.DirectCall2Vessel("testVehicle01", "GetFileData", string.Empty);
 
 Console.ReadLine();
 

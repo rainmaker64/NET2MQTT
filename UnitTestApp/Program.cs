@@ -23,6 +23,7 @@ Console.WriteLine($"Fleet connected to Cloud = {ret}");
 var vesselTwin = new IoTVessel(AzureDeviceConnectionString);
 vesselTwin.IoTMessageEvent += VesselTwin_IoTMessageEvent;
 ret = vesselTwin.Open();
+
 Console.WriteLine($"Create Vessel Twin: {ret}");
 
 if (ret > 0)

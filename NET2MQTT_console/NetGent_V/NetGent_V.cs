@@ -9,6 +9,8 @@ using SnSYS_IoT;
 using Newtonsoft.Json;
 using Microsoft.Azure.Amqp.Framing;
 using System.IO;
+using System.Net.Http.Headers;
+using Microsoft.Rest.TransientFaultHandling;
 
 namespace NetGent_V
 {
@@ -33,6 +35,11 @@ namespace NetGent_V
 
             this.vesselTwin = new IoTVessel(AzureDeviceConnectionString);
             this.vesselTwin.IoTMessageEvent += VesselTwin_IoTMessageEvent;
+        }
+
+        public IoTVessel GetIoTVessel()
+        {
+            return this.vesselTwin;
         }
 
         public void Add_IoTMessageEvent(IoTVessel.IoTMessageEventHandler eventhandler)
@@ -153,6 +160,29 @@ namespace NetGent_V
             }
 
             return ret;
+        }
+
+        public async Task<(HttpStatusCode, string)> SendHttpRequest(string serverUrl, string fileUrl, HttpMethod method, string request)
+        {
+            string response = string.Empty;
+            HttpStatusCode statusCode = HttpStatusCode.BadRequest;
+
+            string url = string.Format($@"http://{serverUrl}/{fileUrl}");
+            using (var client = new HttpClient())
+            {
+                client.DefaultRequestHeaders.Add("User-Agent", "NET2MQTT/1.0");
+                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+                var result = await client.SendAsync(new HttpRequestMessage(method, url));
+
+                if (result != null)
+                {
+                    statusCode = result.StatusCode;                    
+                    response = await result.Content.ReadAsStringAsync();
+                }
+            }
+
+            return (statusCode, response);
         }
 
         /// <summary>

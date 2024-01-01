@@ -29,6 +29,24 @@ namespace NetGent_V
         }
     }
 
+    internal class HttpHeadResponse
+    {
+        public string FileURL { get; set; }
+        public int Length { get; set; }
+    }
+
+    internal class HttpGetResponse
+    {
+        public string FileURL { get; set; }
+        public int TotalLength { get; set; }
+        public string ContentType { get; set; }
+        public DateTimeOffset LastModified { get; set; }
+        public int Offset { get; set; }
+        public int Length { get; set; }
+        public byte[] Data { get; set; }
+    }
+
+
     internal class Utils
     {
         static public (string ip, int port) ParseIPPort(string IPPort)

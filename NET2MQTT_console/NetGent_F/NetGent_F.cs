@@ -93,16 +93,14 @@ namespace NetGent_F
             return ret;
         }
 
-        public async Task<int> DirectCall2Vessel(string vesselName, string commandName, string payloadJson, double timeout = 30)
+        public async Task<(int, string)> DirectCall2Vessel(string vesselName, string commandName, string payloadJson, double timeout = 30)
         {
             int ret = 0;
             string response;
 
             (ret, response) = await this.fleetTwin.Call2Vessel(vesselName, commandName, payloadJson, timeout);
 
-            Console.WriteLine($"DirectCall: ret = {ret}, response = {response}");
-
-            return ret;
+            return (ret, response);
         }
 
         /// <summary>

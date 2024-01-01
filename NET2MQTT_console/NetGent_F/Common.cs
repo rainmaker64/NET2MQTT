@@ -44,6 +44,23 @@ namespace NetGent_F
         }
     }
 
+    internal class HttpHeadResponse
+    {
+        public string FileURL { get; set; }
+        public int Length { get; set; }
+    }
+
+    internal class HttpGetResponse
+    {
+        public string FileURL { get; set; }
+        public int TotalLength { get; set; }
+        public string ContentType { get; set; }
+        public DateTimeOffset LastModified { get; set; }
+        public int Offset { get; set; }
+        public int Length { get; set; }
+        public byte[] Data { get; set; }
+    }
+
     internal class IoT_Settings
     {
         static internal string AzureHostName = "airgazerIoT.azure-devices.net";

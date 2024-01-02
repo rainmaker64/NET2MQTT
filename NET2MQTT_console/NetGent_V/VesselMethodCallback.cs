@@ -64,7 +64,7 @@ namespace NetGent_V
                     try
                     {
                         url = jobject["url"].ToString();
-                        filename = jobject["filename"].ToString();
+                        filename = jobject["file"].ToString();
 
                     }
                     catch (Exception ex)
@@ -106,56 +106,50 @@ namespace NetGent_V
             HttpResponseMessage httpResponse;
             MethodResponse methodResponse = null;
 
-            Console.WriteLine($"Method: GetFileSize() is called, {methodRequest.DataAsJson}");
+            Console.WriteLine($"Method: GetFileData() is called, {methodRequest.DataAsJson}");
 
             if (string.IsNullOrEmpty(methodRequest.DataAsJson) == false)
             {
-                var jobject = JObject.Parse(methodRequest.DataAsJson);
+                var param = JsonConvert.DeserializeObject<GetFileDataParam>(methodRequest.DataAsJson);
 
-                if (jobject != null)
+                if (param != null)
                 {
-                    string url;
-                    string filename;
-                    int length;
-                    int offset;
-
-                    try
-                    {
-                        url = jobject["url"].ToString();
-                        filename = jobject["filename"].ToString();
-                        length = (int)jobject["length"];
-                        offset = (int)jobject["offset"];
-
-                    }
-                    catch (Exception ex)
-                    {
-                        return methodResponse;
-                    }
-
-                    httpResponse = await SendHttpRequest(url, filename, HttpMethod.Get, string.Empty);
+                    httpResponse = await SendHttpRequest(param.url, param.file, HttpMethod.Get, string.Empty);
 
                     if (httpResponse != null)
                     {
+                        Console.WriteLine("length = " + httpResponse.Content.Headers.ContentLength.Value);
+                        Console.WriteLine("LastModified = " + httpResponse.Content.Headers.LastModified);
+
                         getResponse = new HttpGetResponse();
 
-                        if (length == 0)
+                        if (param.length == 0)
                         {
-                            length = (int)httpResponse.Content.Headers.ContentLength.GetValueOrDefault();
+                            param.length = (int)httpResponse.Content.Headers.ContentLength.GetValueOrDefault();
                         }
 
-                        if (length > 0)
+                        Console.WriteLine($"Param Length = {param.length}");
+                        if (param.length > 0)
                         {
-                            getResponse.Data = new byte[length];
-                            using (var filestream = httpResponse.Content.ReadAsStream())
+                            getResponse.Data = new byte[param.length];
+                            try
                             {
-                                getResponse.Length = filestream.Read(getResponse.Data, offset, length);
+                                var filestream = httpResponse.Content.ReadAsStream();
+                                filestream.Seek(param.offset, SeekOrigin.Begin);
+                                getResponse.Length = filestream.Read(getResponse.Data, 0, param.length);
+                                filestream.Close();
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine("Exception:" + ex.Message);
                             }
 
-                            getResponse.FileURL = filename;
+                            getResponse.FileURL = param.file;
                             getResponse.TotalLength = (int)httpResponse.Content.Headers.ContentLength.Value;
                             getResponse.LastModified = httpResponse.Content.Headers.LastModified.GetValueOrDefault();
                             getResponse.ContentType = httpResponse.Content.Headers.ContentType.ToString();
-                            getResponse.Offset = offset;
+                            getResponse.Offset = param.offset;
+                            Console.WriteLine("\t Done");
                         }
                         else
                         {
@@ -164,6 +158,8 @@ namespace NetGent_V
                             getResponse.Offset = 0;
                             getResponse.Length = 0;
                             getResponse.Data = null;
+
+                            Console.WriteLine("\t Not Done");
                         }
 
                         result = System.Text.Encoding.ASCII.GetBytes(JsonConvert.SerializeObject(getResponse));
@@ -172,6 +168,7 @@ namespace NetGent_V
                     try
                     {
                         methodResponse = new MethodResponse(result, statusCode);
+                        Console.WriteLine("Return successfully methodResponse");
                     }
                     catch (Exception ex)
                     {

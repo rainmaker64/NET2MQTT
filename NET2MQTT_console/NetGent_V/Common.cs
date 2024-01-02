@@ -45,6 +45,21 @@ namespace NetGent_V
         public int Length { get; set; }
         public byte[] Data { get; set; }
     }
+    public class GetFileDataParam
+    {
+        public string url { get; set; }
+        public string file { get; set; }
+        public int offset { get; set; }
+        public int length { get; set; }
+
+        public GetFileDataParam(string url, string file, int offset, int length)
+        {
+            this.url = url;
+            this.file = file;
+            this.offset = offset;
+            this.length = length;
+        }
+    }
 
 
     internal class Utils

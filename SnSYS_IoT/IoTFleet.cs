@@ -349,7 +349,6 @@ namespace SnSYS_IoT
                 {
                     method.SetPayloadJson(payloadJson);
                 }
-
                 try
                 {
                     response = await s_serviceClient.InvokeDeviceMethodAsync(vesselName, method);

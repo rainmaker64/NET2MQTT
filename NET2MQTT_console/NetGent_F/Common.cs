@@ -61,6 +61,35 @@ namespace NetGent_F
         public byte[] Data { get; set; }
     }
 
+    public class GetFileDataParam
+    {
+        public string url { get; set; }
+        public string file { get; set; }
+        public int offset { get; set; }
+        public int length { get; set; }
+
+        public GetFileDataParam(string url, string file, int offset, int length)
+        {
+            this.url = url;
+            this.file = file;
+            this.offset = offset;
+            this.length = length;
+        }
+    }
+
+    public class GetFileSizeParam
+    {
+        public string url { get; set; }
+        public string file { get; set; }
+
+        public GetFileSizeParam(string url, string file)
+        {
+            this.url = url;
+            this.file = file;
+        }
+    }
+
+
     internal class IoT_Settings
     {
         static internal string AzureHostName = "airgazerIoT.azure-devices.net";

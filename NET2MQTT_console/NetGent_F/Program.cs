@@ -4,6 +4,8 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using SnSYS_IoT;
 using System;
+using System.Net;
+using System.Text;
 
 Console.WriteLine("Hello, World! Start Fleet Network Agent");
 
@@ -11,66 +13,37 @@ var netagent_fleet = new FleetNetAgent("testVehicle01");
 netagent_fleet.Add_IoTMessageEvent(FleetTwin_IoTMessageEvent);
 netagent_fleet.TcpReceiveEvent += FleetTwin_TcpRxEvent;
 netagent_fleet.Start();
-//netagent_fleet.CreateTcpServer("127.0.0.1", 80);
+netagent_fleet.CreateTcpServer("127.0.0.1", 80);
 
 Console.ReadLine();
 
 var jsonhead =
     @"{
-        ""url"": ""127.0.0.1"",
-        ""file"": ""test.txt"",
+        ""url"": ""127.0.0.1:8080"",
+        ""file"": ""/projects/SN2234/Station/Station.station"",
     }";
 
 var jObjectHead = JObject.Parse(jsonhead);
 Console.WriteLine(jObjectHead.ToString());
 
-(int retHead, string responseHead) = await netagent_fleet.DirectCall2Vessel("testVehicle01", "GetFileSize", jObjectHead.ToString());
-
-if (string.IsNullOrEmpty(responseHead) == false)
-{
-    var headResponse = JsonConvert.DeserializeObject<HttpHeadResponse>(responseHead);
-    if (headResponse != null)
-    {
-        Console.WriteLine("Response of HEAD");
-        Console.WriteLine($"FILE: {headResponse.FileURL}");
-        Console.WriteLine($"Length: {headResponse.Length}");
-    }
-}
+int filesize = await netagent_fleet.FleetTwin_GetFileSizeFromVessel("testVehicle01", "127.0.0.1:8080", @"\projects\SN2234\station\station.station");
+Console.WriteLine($"File Size = {filesize}");
 
 Console.ReadLine();
-var jsonget =
-    @"{
-        ""url"": ""127.0.0.1"",
-        ""file"": ""test.txt"",
-        ""offset"": 0,
-        ""length"": 0
-    }";
-var jObjectGet = JObject.Parse(jsonget);
-Console.WriteLine(jObjectGet.ToString());
+#if true
+var memstream = await netagent_fleet.FleetTwin_GetFileFromVessel("testVehicle01", "127.0.0.1:8080", @"\projects\SN2234\station\station.station");
 
-(int retGet, string responseGet) = await netagent_fleet.DirectCall2Vessel("testVehicle01", "GetFileData", jObjectGet.ToString());
-
-if (string.IsNullOrEmpty(responseGet) == false)
+if (memstream != null)
 {
-    var getResponse = JsonConvert.DeserializeObject<HttpGetResponse>(responseGet);
-    if (getResponse != null)
-    {
-        Console.WriteLine("Response of GET");
-        Console.WriteLine($"FILE: {getResponse.FileURL}");
-        Console.WriteLine($"Total Length: {getResponse.TotalLength}");
-        Console.WriteLine($"Offset: {getResponse.Offset}");
-        Console.WriteLine($"Length: {getResponse.Length}");
-        Console.WriteLine($"Type: {getResponse.ContentType}");
-        Console.WriteLine($"LastModified: {getResponse.LastModified}");
-        var rxstring = System.Text.Encoding.ASCII.GetString(getResponse.Data, 0, getResponse.Length);
-        Console.WriteLine($"Content: \r\n {rxstring}");
-    }
+    var rxstring = System.Text.Encoding.ASCII.GetString(memstream.GetBuffer(), 0, memstream.GetBuffer().Length);
+    Console.WriteLine($"Content: \r\n {rxstring}");
+    
 }
+#endif
 
 
 
 Console.ReadLine();
-
 
 void FleetTwin_IoTMessageEvent(object sender, IoTFleet.IoTMessageEventArgs e)
 {
@@ -81,5 +54,3 @@ void FleetTwin_TcpRxEvent(object sender, Net2MqttMessage e)
 {
     Console.WriteLine($"F: Receive Data from IP {e.IP} PORT {e.Port}, PAYLOAD: {e.Payload} ");
 }
-
-

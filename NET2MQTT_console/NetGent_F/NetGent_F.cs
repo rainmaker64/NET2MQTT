@@ -5,13 +5,23 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Reflection.Metadata;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Azure;
+using DotNetty.Common.Utilities;
 using Microsoft.Azure.Amqp.Framing;
 using Newtonsoft.Json;
 using SnSYS_IoT;
+using static Microsoft.Azure.Amqp.Serialization.SerializableType;
+using static System.Net.Mime.MediaTypeNames;
+using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
+using System.Text.Unicode;
+using Microsoft.Azure.EventHubs;
+using System.Collections.ObjectModel;
 
 namespace NetGent_F
 {
@@ -24,11 +34,15 @@ namespace NetGent_F
         public delegate void TcpReceiveEventHandler(object sender, Net2MqttMessage e);
         public event TcpReceiveEventHandler? TcpReceiveEvent;
 
+        private HttpListener httpListener;
+
         private string _vesselIoTName;
         private Dictionary<string, TcpInfoF> tcpList;
         private IoTFleet fleetTwin;
         private CancellationTokenSource taskTokenSrc;
         private bool isStarted;
+        const string httpURL = "http://+:80/";
+
         const int MAX_RECEIVABLE_FILE_SIZE = 4 * 1024;
 
         public FleetNetAgent(string vesselIoTName)
@@ -40,6 +54,11 @@ namespace NetGent_F
             this.TcpReceiveEvent = null;
 
             var connectionString = string.Format($"HostName={IoT_Settings.AzureHostName};SharedAccessKeyName={IoT_Settings.SASKeyName};SharedAccessKey={IoT_Settings.SASKey}");
+
+            this.httpListener = new HttpListener();
+
+            Task httpServerTask = new Task(() => HttpListnerTask(this.httpListener, httpURL, taskTokenSrc.Token));
+            httpServerTask.Start();
 
             fleetTwin = new IoTFleet(connectionString, IoT_Settings.AzureEventHubEP, IoT_Settings.AzureEventHubPath, IoT_Settings.SASKey, IoT_Settings.SASKeyName);
             fleetTwin.IoTMessageEvent += FleetTwin_IoTMessageEvent;
@@ -263,68 +282,9 @@ namespace NetGent_F
                     if ( ndata > 0 && string.IsNullOrEmpty(rxstring) == false)
                     {
                         // Check if it is http response
-                        //if (tcpInfo.Port == 80 || tcpInfo.Port == 8080)
-                        if (tcpInfo.Port == 80)
-                        {
-                            var lines = rxstring.Split(new string[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-                            var httpCmd = HandleHttpCommand(lines);
-                            if (httpCmd != null)
-                            {
-                                Console.WriteLine($"CMD: {httpCmd.Command}");
-                                Console.WriteLine($"PARAM: {httpCmd.Param}");
-                                Console.WriteLine($"HTTP VERSION: {httpCmd.HttpVersion}");
-                                Console.WriteLine($"Connection: {httpCmd.Connection}");
-                                Console.WriteLine($"Host: {httpCmd.Host}");
+                        ret = await SendNet2MqttMessage(tcpInfo.IP, tcpInfo.Port, rxstring);
 
-                                /// Call IoT Direct Call to get the data from the remote HTTP Server.
-                                switch (httpCmd.Command)
-                                {
-                                    case "HEAD":
-                                        {
-                                            int filesize = await FleetTwin_GetFileSizeFromVessel("testVehicle01", "127.0.0.1:8080", httpCmd.Param);
-                                            Console.WriteLine($"File Size = {filesize}");
-
-                                            string httpResponse = "HTTP/1.1 200 OK\r\n";
-                                            httpResponse += $"Content-Length: {filesize}\r\n";
-                                            httpResponse += "Content-Type: application/json\r\n\r\n";
-
-                                            Byte[] txbuffer = System.Text.Encoding.ASCII.GetBytes(httpResponse);
-                                            tcpInfo.Stream.Write(txbuffer);
-
-                                            break;
-
-                                        }
-#if true
-                                    case "GET":
-                                        {
-                                            var memstream = await FleetTwin_GetFileFromVessel("testVehicle01", "127.0.0.1:8080", @"\projects\SN2234\station\station.station");
-
-                                            if (memstream != null)
-                                            {
-                                                var getstring = System.Text.Encoding.ASCII.GetString(memstream.GetBuffer(), 0, memstream.GetBuffer().Length);
-                                                Console.WriteLine(getstring);
-                                                string httpResponse = "HTTP/1.1 200 OK\r\n";
-                                                httpResponse += $"Content-Length: {memstream.GetBuffer().Length}\r\n";
-                                                httpResponse += "Content-Type: application/json\r\n\r\n";
-                                                httpResponse += "Keep-Alive: timeout=5";
-                                                httpResponse += "\r\n";
-                                                httpResponse += getstring;
-
-                                                Byte[] txbuffer = System.Text.Encoding.ASCII.GetBytes(httpResponse);
-                                                tcpInfo.Stream.Write(txbuffer);
-                                            }
-                                            break;
-
-                                        }
-#endif
-                                }
-                            }
-                        }
-                        else
-                        {
-                            ret = await SendNet2MqttMessage(tcpInfo.IP, tcpInfo.Port, rxstring);
-                        }
-
+                        Console.WriteLine("---------------------------\r\n");
                         if (this.TcpReceiveEvent != null)
                         {
                             this.TcpReceiveEvent(this, new Net2MqttMessage(string.Empty, tcpInfo.IP, tcpInfo.Port, rxstring));
@@ -334,6 +294,108 @@ namespace NetGent_F
             }
 
             Console.WriteLine("TcpClientReceiver finished");
+        }
+
+
+        private async void HttpListnerTask(HttpListener httpServer, string httpurl, CancellationToken ct)
+        {
+            Console.WriteLine("HTTP LISTNER TASK");
+            if (httpServer != null && string.IsNullOrEmpty(httpurl) == false)
+            {
+                Console.WriteLine("HTTP LISTNER TASK Start...");
+                httpServer.AuthenticationSchemes = AuthenticationSchemes.Anonymous;
+                httpServer.Prefixes.Add(httpURL);
+
+                httpServer.Start();
+
+                while(true)
+                {
+                    HttpListenerContext ctx = await httpServer.GetContextAsync();
+
+                    var response = await HandleHttpRequest(ctx);
+
+                    if (ct.IsCancellationRequested == true)
+                    {
+                        httpServer.Close();
+                        break;
+                    }
+                }
+            }
+
+        }
+
+        private async Task<HttpListenerResponse> HandleHttpRequest(HttpListenerContext httpctx)
+        {
+            HttpListenerRequest req;
+            HttpListenerResponse resp = null;
+
+            if (httpctx != null && (req = httpctx.Request) != null)
+            {
+                resp = httpctx.Response;
+                // Print out some info about the request
+                Console.WriteLine("--------------------");
+                Console.WriteLine(req.RawUrl);
+                Console.WriteLine(req.HttpMethod);
+                Console.WriteLine(req.UserHostName);
+                Console.WriteLine(req.UserAgent);
+                Console.WriteLine();
+
+                /// Call IoT Direct Call to get the data from the remote HTTP Server.
+                switch (req.HttpMethod)
+                {
+                    case "HEAD":
+                        {
+                            Console.WriteLine($"HEAD Command");
+
+                            int filesize = await FleetTwin_GetFileSizeFromVessel("testVehicle01", "127.0.0.1:8080", req.RawUrl);
+                            Console.WriteLine($"File Size = {filesize}");
+                            resp.StatusCode = 200;
+                            resp.AddHeader("accept-ranges", "bytes");
+                            resp.AddHeader("cache-control", "max-age=3600");
+                            resp.AddHeader("last-modified", "Sat, 06 Jan 2024 11:48:11 GMT");
+                            resp.AddHeader("etag", "W/\"9007199254771633-4-2024-01-06T10:48:11.628Z\"");
+                            resp.ContentType = "application/octet-stream";
+                            resp.AddHeader("Connection", "keep-alive");
+                            resp.AddHeader("Keep-Alive", "timeout=5");
+                            resp.ContentLength64 = filesize;
+
+                            resp.Close();
+                            break;
+
+                        }
+                    case "GET":
+                        {
+                            Console.WriteLine($"GET Command");
+                            var memstream = await FleetTwin_GetFileFromVessel("testVehicle01", "127.0.0.1:8080", req.RawUrl);                          
+                            //resp.ContentEncoding = Encoding.Default;
+
+                            // Read the source file into a byte array.
+                            if (memstream != null)
+                            {
+                                resp.StatusCode = 200;
+                                resp.AddHeader("accept-ranges", "bytes");
+                                resp.AddHeader("cache-control", "max-age=3600");
+                                resp.AddHeader("last-modified", "Sat, 06 Jan 2024 11:48:11 GMT");
+                                resp.AddHeader("etag", "W/\"9007199254771633-4-2024-01-06T10:48:11.628Z\"");
+                                resp.ContentLength64 = memstream.Length;
+                                resp.ContentType = "application/octet-stream";
+                                resp.AddHeader("Connection", "keep-alive");
+                                resp.AddHeader("Keep-Alive", "timeout=5");
+
+                                await resp.OutputStream.WriteAsync(memstream.GetBuffer(), 0, (int)memstream.Length);
+                            }
+                            else
+                            {
+                                resp.ContentLength64 = 0;
+                            }
+
+                            resp.Close();
+                            break;
+                        }
+                }
+            }
+
+            return resp;
         }
 
         public void Dispose()
@@ -476,7 +538,7 @@ namespace NetGent_F
             {
                 foreach (var line in lines)
                 {
-                    Console.WriteLine(line);
+                    Console.WriteLine($"HTTP - {line}");
                     string[] words = line.Split(new string[] { " ", "\t" }, StringSplitOptions.None);
 
                     if (words != null && words.Length > 0)

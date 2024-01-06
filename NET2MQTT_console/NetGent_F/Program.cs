@@ -13,7 +13,7 @@ var netagent_fleet = new FleetNetAgent("testVehicle01");
 netagent_fleet.Add_IoTMessageEvent(FleetTwin_IoTMessageEvent);
 netagent_fleet.TcpReceiveEvent += FleetTwin_TcpRxEvent;
 netagent_fleet.Start();
-netagent_fleet.CreateTcpServer("127.0.0.1", 80);
+//netagent_fleet.CreateTcpServer("127.0.0.1", 80);
 
 Console.ReadLine();
 
@@ -52,5 +52,5 @@ void FleetTwin_IoTMessageEvent(object sender, IoTFleet.IoTMessageEventArgs e)
 
 void FleetTwin_TcpRxEvent(object sender, Net2MqttMessage e)
 {
-    Console.WriteLine($"F: Receive Data from IP {e.IP} PORT {e.Port}, PAYLOAD: {e.Payload} ");
+    //Console.WriteLine($"F: Receive Data from IP {e.IP} PORT {e.Port}, PAYLOAD: {e.Payload} ");
 }

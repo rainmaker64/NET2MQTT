@@ -118,9 +118,11 @@ namespace NetGent_V
 
                     if (httpResponse != null)
                     {
+                        /*
+                        Console.WriteLine($"==> {httpResponse.ToString()}");
                         Console.WriteLine("length = " + httpResponse.Content.Headers.ContentLength.Value);
                         Console.WriteLine("LastModified = " + httpResponse.Content.Headers.LastModified);
-
+                        */
                         getResponse = new HttpGetResponse();
 
                         if (param.length == 0)
@@ -128,7 +130,6 @@ namespace NetGent_V
                             param.length = (int)httpResponse.Content.Headers.ContentLength.GetValueOrDefault();
                         }
 
-                        Console.WriteLine($"Param Length = {param.length}");
                         if (param.length > 0)
                         {
                             getResponse.Data = new byte[param.length];
@@ -149,7 +150,6 @@ namespace NetGent_V
                             getResponse.LastModified = httpResponse.Content.Headers.LastModified.GetValueOrDefault();
                             getResponse.ContentType = httpResponse.Content.Headers.ContentType.ToString();
                             getResponse.Offset = param.offset;
-                            Console.WriteLine("\t Done");
                         }
                         else
                         {
@@ -158,8 +158,6 @@ namespace NetGent_V
                             getResponse.Offset = 0;
                             getResponse.Length = 0;
                             getResponse.Data = null;
-
-                            Console.WriteLine("\t Not Done");
                         }
 
                         result = System.Text.Encoding.ASCII.GetBytes(JsonConvert.SerializeObject(getResponse));
@@ -168,7 +166,7 @@ namespace NetGent_V
                     try
                     {
                         methodResponse = new MethodResponse(result, statusCode);
-                        Console.WriteLine("Return successfully methodResponse");
+                        //Console.WriteLine("Return successfully methodResponse");
                     }
                     catch (Exception ex)
                     {

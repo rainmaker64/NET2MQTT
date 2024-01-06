@@ -424,24 +424,26 @@ namespace SnSYS_IoT
                 {
                     continue;
                 }
-
-                foreach (EventData eventData in events)
+                if (events != null)
                 {
-                    if (eventData != null)
+                    foreach (EventData eventData in events)
                     {
-                        var sysProp = eventData.SystemProperties;
-                        if (sysProp.TryGetValue("iothub-connection-device-id", out var senderID) == true)
+                        if (eventData != null)
                         {
-                            deviceID = (senderID.ToString() == null ? String.Empty : senderID.ToString());
-                        }
-                        else
-                        {
-                            deviceID = string.Empty;
-                        }
-                        telemetry = (eventData.Body.Array != null && eventData.Body.Array.Length == 0) ? string.Empty:Encoding.UTF8.GetString(eventData.Body.Array);
-                        if (this.IoTMessageEvent != null && string.IsNullOrEmpty(deviceID) == false && string.IsNullOrEmpty(telemetry) == false)
-                        {
-                            this.IoTMessageEvent(this, new IoTMessageEventArgs(deviceID, telemetry));
+                            var sysProp = eventData.SystemProperties;
+                            if (sysProp.TryGetValue("iothub-connection-device-id", out var senderID) == true)
+                            {
+                                deviceID = (senderID.ToString() == null ? String.Empty : senderID.ToString());
+                            }
+                            else
+                            {
+                                deviceID = string.Empty;
+                            }
+                            telemetry = (eventData.Body.Array != null && eventData.Body.Array.Length == 0) ? string.Empty : Encoding.UTF8.GetString(eventData.Body.Array);
+                            if (this.IoTMessageEvent != null && string.IsNullOrEmpty(deviceID) == false && string.IsNullOrEmpty(telemetry) == false)
+                            {
+                                this.IoTMessageEvent(this, new IoTMessageEventArgs(deviceID, telemetry));
+                            }
                         }
                     }
                 }

@@ -47,7 +47,6 @@ namespace NetGent_V
         {
             byte[] result = null;
             int statusCode = 500;
-            HttpHeadResponse headResponse = null;
             MethodResponse methodResponse = null;
 
             Console.WriteLine($"Method: GetFileSize() is called, {methodRequest.DataAsJson}");
@@ -72,27 +71,37 @@ namespace NetGent_V
                         return methodResponse;
                     }
 
-                    HttpResponseMessage httpResponse;
-                    httpResponse = await SendHttpRequest(url, filename, HttpMethod.Head, string.Empty);
+                    HttpResponseMessage httpResponse = await SendHttpRequest(url, filename, HttpMethod.Head, string.Empty);
 
                     if (httpResponse != null)
                     {
-                        headResponse = new HttpHeadResponse();
+                        int length;
+                        var headResponse = new HttpHeadResponse();
 
-                        headResponse.FileURL = filename;
-                        headResponse.Length = (int)httpResponse.Content.Headers.ContentLength.Value;
+                        headResponse.StatusCode = (int)httpResponse.StatusCode;
+                        headResponse.FileURL = httpResponse.RequestMessage.RequestUri.AbsolutePath;
+                        Console.WriteLine($"File URL = {headResponse.FileURL}");
+                        headResponse.ContentType = httpResponse.Content.Headers.GetValues("Content-Type").ToList()[0];
+                        var contentlength_int = httpResponse.Content.Headers.GetValues("Content-Length").ToList()[0];
+                        headResponse.ContentLength = int.TryParse(contentlength_int, out length) == true ? length: 0;
+
+                        headResponse.LastModified = httpResponse.Content.Headers.GetValues("Last-Modified").ToList()[0];
+                        headResponse.AcceptRanges = httpResponse.Headers.GetValues("Accept-Ranges").ToList()[0];
+                        headResponse.CacheControl = httpResponse.Headers.GetValues("Cache-Control").ToList()[0];
+                        headResponse.ETag = httpResponse.Headers.GetValues("ETag").ToList()[0];
+                        headResponse.Date = httpResponse.Headers.GetValues("Date").ToList()[0];
+                        headResponse.Connection = httpResponse.Headers.GetValues("Connection").ToList()[0];
+                        headResponse.KeepAlive = httpResponse.Headers.GetValues("Keep-Alive").ToList()[0];
 
                         result = System.Text.Encoding.ASCII.GetBytes(JsonConvert.SerializeObject(headResponse));
                         statusCode = (int)httpResponse.StatusCode;
                     }
-                    try
+                    else
                     {
-                        methodResponse = new MethodResponse(result, statusCode);
+                        result = System.Text.Encoding.ASCII.GetBytes(string.Empty);
                     }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine(ex.Message);
-                    }
+
+                    methodResponse = new MethodResponse(result, statusCode);
                 }
             }
             return methodResponse;
@@ -132,7 +141,9 @@ namespace NetGent_V
 
                         if (param.length > 0)
                         {
+                            int length;
                             getResponse.Data = new byte[param.length];
+
                             try
                             {
                                 var filestream = httpResponse.Content.ReadAsStream();
@@ -145,16 +156,29 @@ namespace NetGent_V
                                 Console.WriteLine("Exception:" + ex.Message);
                             }
 
-                            getResponse.FileURL = param.file;
-                            getResponse.TotalLength = (int)httpResponse.Content.Headers.ContentLength.Value;
-                            getResponse.LastModified = httpResponse.Content.Headers.LastModified.GetValueOrDefault();
-                            getResponse.ContentType = httpResponse.Content.Headers.ContentType.ToString();
+                            getResponse.FileURL = httpResponse.RequestMessage.RequestUri.AbsolutePath;
+                            getResponse.StatusCode = (int)httpResponse.StatusCode;
+                            getResponse.ContentType = httpResponse.Content.Headers.GetValues("Content-Type").ToList()[0];
+                            var contentlength_int = httpResponse.Content.Headers.GetValues("Content-Length").ToList()[0];
+                            getResponse.ContentLength = int.TryParse(contentlength_int, out length) == true ? length : 0;
+
+                            getResponse.LastModified = httpResponse.Content.Headers.GetValues("Last-Modified").ToList()[0];
+                            getResponse.AcceptRanges = httpResponse.Headers.GetValues("Accept-Ranges").ToList()[0];
+                            getResponse.CacheControl = httpResponse.Headers.GetValues("Cache-Control").ToList()[0];
+                            getResponse.ETag = httpResponse.Headers.GetValues("ETag").ToList()[0];
+                            getResponse.Date = httpResponse.Headers.GetValues("Date").ToList()[0];
+                            getResponse.Connection = httpResponse.Headers.GetValues("Connection").ToList()[0];
+                            getResponse.KeepAlive = httpResponse.Headers.GetValues("Keep-Alive").ToList()[0];
+
                             getResponse.Offset = param.offset;
                         }
                         else
                         {
-                            getResponse.TotalLength = (int)httpResponse.Content.Headers.ContentLength.Value;
-                            getResponse.LastModified = httpResponse.Content.Headers.LastModified.GetValueOrDefault();
+                            int length;
+                            var contentlength_int = httpResponse.Content.Headers.GetValues("Content-Length").ToList()[0];
+
+                            getResponse.ContentLength = int.TryParse(contentlength_int, out length) == true ? length : 0;
+                            getResponse.LastModified = httpResponse.Content.Headers.GetValues("Last-Modified").ToList()[0];
                             getResponse.Offset = 0;
                             getResponse.Length = 0;
                             getResponse.Data = null;

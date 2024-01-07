@@ -32,17 +32,33 @@ namespace NetGent_V
     internal class HttpHeadResponse
     {
         public string FileURL { get; set; }
-        public int Length { get; set; }
+        public int StatusCode { get; set; }
+        public string ContentType { get; set; }
+        public int ContentLength { get; set; }
+        public string LastModified { get; set; }
+        public string AcceptRanges { get; set; }
+        public string CacheControl { get; set; }
+        public string ETag { get; set; }
+        public string Date { get; set; }
+        public string Connection { get; set; }
+        public string KeepAlive { get; set; }
     }
 
     internal class HttpGetResponse
     {
         public string FileURL { get; set; }
-        public int TotalLength { get; set; }
+        public int StatusCode { get; set; }
         public string ContentType { get; set; }
-        public DateTimeOffset LastModified { get; set; }
-        public int Offset { get; set; }
+        public int ContentLength { get; set; }
+        public string LastModified { get; set; }
+        public string AcceptRanges { get; set; }
+        public string CacheControl { get; set; }
+        public string ETag { get; set; }
+        public string Date { get; set; }
+        public string Connection { get; set; }
+        public string KeepAlive { get; set; }
         public int Length { get; set; }
+        public int Offset { get; set; }
         public byte[] Data { get; set; }
     }
     public class GetFileDataParam

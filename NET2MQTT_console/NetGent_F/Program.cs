@@ -13,7 +13,8 @@ var netagent_fleet = new FleetNetAgent("testVehicle01");
 netagent_fleet.Add_IoTMessageEvent(FleetTwin_IoTMessageEvent);
 netagent_fleet.TcpReceiveEvent += FleetTwin_TcpRxEvent;
 netagent_fleet.Start();
-//netagent_fleet.CreateTcpServer("127.0.0.1", 80);
+netagent_fleet.CreateTcpServer("127.0.0.1", 12501);
+netagent_fleet.CreateTcpServer("127.0.0.1", 13001);
 
 Console.ReadLine();
 
@@ -26,16 +27,16 @@ var jsonhead =
 var jObjectHead = JObject.Parse(jsonhead);
 Console.WriteLine(jObjectHead.ToString());
 
-int filesize = await netagent_fleet.FleetTwin_GetFileSizeFromVessel("testVehicle01", "127.0.0.1:8080", @"\projects\SN2234\station\station.station");
-Console.WriteLine($"File Size = {filesize}");
+var response = await netagent_fleet.FleetTwin_GetFileSizeFromVessel("testVehicle01", "127.0.0.1:8080", @"\projects\SN2234\station\station.station");
+Console.WriteLine($"File Size = {response.ContentLength}");
 
 Console.ReadLine();
 #if true
-var memstream = await netagent_fleet.FleetTwin_GetFileFromVessel("testVehicle01", "127.0.0.1:8080", @"\projects\SN2234\station\station.station");
+var file_response = await netagent_fleet.FleetTwin_GetFileFromVessel("testVehicle01", "127.0.0.1:8080", @"\projects\SN2234\station\station.station");
 
-if (memstream != null)
+if (file_response != null)
 {
-    var rxstring = System.Text.Encoding.ASCII.GetString(memstream.GetBuffer(), 0, memstream.GetBuffer().Length);
+    var rxstring = System.Text.Encoding.ASCII.GetString(file_response.Data, 0, file_response.Data.Length);
     Console.WriteLine($"Content: \r\n {rxstring}");
     
 }

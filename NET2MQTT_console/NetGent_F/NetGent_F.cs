@@ -22,6 +22,7 @@ using System.Runtime.InteropServices;
 using System.Text.Unicode;
 using Microsoft.Azure.EventHubs;
 using System.Collections.ObjectModel;
+using Microsoft.Azure.Devices.Client;
 
 namespace NetGent_F
 {
@@ -236,7 +237,7 @@ namespace NetGent_F
                     try
                     {
                         tcpInfo.Listener.Start();
-                        Console.WriteLine("F: Waiting for connection");
+                        Console.WriteLine($"F: Waiting for connection - {tcpInfo.Port}");
                         tcpInfo.Client = tcpInfo.Listener.AcceptTcpClient();
                         Console.WriteLine("\tF: Connected");
                         tcpInfo.Stream = tcpInfo.Client.GetStream();
@@ -284,7 +285,6 @@ namespace NetGent_F
                         // Check if it is http response
                         ret = await SendNet2MqttMessage(tcpInfo.IP, tcpInfo.Port, rxstring);
 
-                        Console.WriteLine("---------------------------\r\n");
                         if (this.TcpReceiveEvent != null)
                         {
                             this.TcpReceiveEvent(this, new Net2MqttMessage(string.Empty, tcpInfo.IP, tcpInfo.Port, rxstring));
@@ -332,13 +332,6 @@ namespace NetGent_F
             if (httpctx != null && (req = httpctx.Request) != null)
             {
                 resp = httpctx.Response;
-                // Print out some info about the request
-                Console.WriteLine("--------------------");
-                Console.WriteLine(req.RawUrl);
-                Console.WriteLine(req.HttpMethod);
-                Console.WriteLine(req.UserHostName);
-                Console.WriteLine(req.UserAgent);
-                Console.WriteLine();
 
                 /// Call IoT Direct Call to get the data from the remote HTTP Server.
                 switch (req.HttpMethod)
@@ -347,45 +340,53 @@ namespace NetGent_F
                         {
                             Console.WriteLine($"HEAD Command");
 
-                            int filesize = await FleetTwin_GetFileSizeFromVessel("testVehicle01", "127.0.0.1:8080", req.RawUrl);
-                            Console.WriteLine($"File Size = {filesize}");
-                            resp.StatusCode = 200;
-                            resp.AddHeader("accept-ranges", "bytes");
-                            resp.AddHeader("cache-control", "max-age=3600");
-                            resp.AddHeader("last-modified", "Sat, 06 Jan 2024 11:48:11 GMT");
-                            resp.AddHeader("etag", "W/\"9007199254771633-4-2024-01-06T10:48:11.628Z\"");
-                            resp.ContentType = "application/octet-stream";
-                            resp.AddHeader("Connection", "keep-alive");
-                            resp.AddHeader("Keep-Alive", "timeout=5");
-                            resp.ContentLength64 = filesize;
+                            var response = await FleetTwin_GetFileSizeFromVessel("testVehicle01", "127.0.0.1:8080", req.RawUrl);
 
+                            if (response != null)
+                            {
+                                resp.ContentLength64 = response.ContentLength;
+                                resp.StatusCode = response.StatusCode;
+                                resp.AddHeader("accept-ranges", response.AcceptRanges);
+                                resp.AddHeader("cache-control", response.CacheControl);
+                                resp.AddHeader("last-modified", response.LastModified);
+                                resp.AddHeader("etag", response.ETag);
+                                resp.ContentType = response.ContentType;
+                                resp.AddHeader("Connection", response.Connection);
+                                resp.AddHeader("Keep-Alive", response.KeepAlive);
+                            }
+                            else
+                            {
+                                resp.StatusCode = 400;  // Bad Request
+                                resp.ContentLength64 = 0;
+                            }
                             resp.Close();
+
                             break;
 
                         }
                     case "GET":
                         {
                             Console.WriteLine($"GET Command");
-                            var memstream = await FleetTwin_GetFileFromVessel("testVehicle01", "127.0.0.1:8080", req.RawUrl);                          
-                            //resp.ContentEncoding = Encoding.Default;
+                            var response = await FleetTwin_GetFileFromVessel("testVehicle01", "127.0.0.1:8080", req.RawUrl);                          
 
                             // Read the source file into a byte array.
-                            if (memstream != null)
+                            if (response != null)
                             {
-                                resp.StatusCode = 200;
-                                resp.AddHeader("accept-ranges", "bytes");
-                                resp.AddHeader("cache-control", "max-age=3600");
-                                resp.AddHeader("last-modified", "Sat, 06 Jan 2024 11:48:11 GMT");
-                                resp.AddHeader("etag", "W/\"9007199254771633-4-2024-01-06T10:48:11.628Z\"");
-                                resp.ContentLength64 = memstream.Length;
-                                resp.ContentType = "application/octet-stream";
-                                resp.AddHeader("Connection", "keep-alive");
-                                resp.AddHeader("Keep-Alive", "timeout=5");
+                                resp.ContentLength64 = response.ContentLength;
+                                resp.StatusCode = response.StatusCode;
+                                resp.AddHeader("accept-ranges", response.AcceptRanges);
+                                resp.AddHeader("cache-control", response.CacheControl);
+                                resp.AddHeader("last-modified", response.LastModified);
+                                resp.AddHeader("etag", response.ETag);
+                                resp.ContentType = response.ContentType;
+                                resp.AddHeader("Connection", response.Connection);
+                                resp.AddHeader("Keep-Alive", response.KeepAlive);
 
-                                await resp.OutputStream.WriteAsync(memstream.GetBuffer(), 0, (int)memstream.Length);
+                                await resp.OutputStream.WriteAsync(response.Data, 0, response.Data.Length);
                             }
                             else
                             {
+                                resp.StatusCode = 400;  // Bad Request
                                 resp.ContentLength64 = 0;
                             }
 
@@ -436,29 +437,24 @@ namespace NetGent_F
             return ret;
         }
 
-        public async Task<int> FleetTwin_GetFileSizeFromVessel(string vesselname, string httpurl, string fileurl)
+        public async Task<HttpHeadResponse> FleetTwin_GetFileSizeFromVessel(string vesselname, string httpurl, string fileurl)
         {
-            int length = 0;
-
+            HttpHeadResponse headResponse = null;
             var param = new GetFileSizeParam(httpurl, fileurl);
 
             string jsonparam = JsonConvert.SerializeObject(param);
 
             (int retHead, string responseHead) = await DirectCall2Vessel(vesselname, "GetFileSize", jsonparam);
 
-            if (retHead == 200 && string.IsNullOrEmpty(responseHead) == false)
+            if (string.IsNullOrEmpty(responseHead) == false)
             {
-                var headResponse = JsonConvert.DeserializeObject<HttpHeadResponse>(responseHead);
-                if (headResponse != null)
-                {
-                    length = headResponse.Length;
-                }
+                headResponse = JsonConvert.DeserializeObject<HttpHeadResponse>(responseHead);
             }
 
-            return length;
+            return headResponse;
         }
 
-        public async Task<MemoryStream> FleetTwin_GetFileFromVessel(string vesselname, string httpurl, string fileurl)
+        public async Task<HttpGetResponse> FleetTwin_GetFileFromVessel(string vesselname, string httpurl, string fileurl)
         {
             bool bloop = true;
             int curlength = 0;
@@ -467,6 +463,7 @@ namespace NetGent_F
 
             var param = new GetFileDataParam(httpurl, fileurl, curlength, len);
 
+            HttpGetResponse getResponse = null;
             MemoryStream memorystream = null;
 
             while (bloop == true)
@@ -477,24 +474,25 @@ namespace NetGent_F
 
                 if (retGet == 200 && string.IsNullOrEmpty(responseGet) == false)
                 {
-                    var getResponse = JsonConvert.DeserializeObject<HttpGetResponse>(responseGet);
+                    getResponse = JsonConvert.DeserializeObject<HttpGetResponse>(responseGet);
                     if (getResponse != null)
                     {
                         // when getting the total length, allocate the memory size
                         if (memorystream == null)
                         {
-                            memorystream = new MemoryStream(getResponse.TotalLength);
+                            memorystream = new MemoryStream(getResponse.ContentLength);
                         }
                         memorystream.Seek(curlength, SeekOrigin.Begin);
                         memorystream.Write(getResponse.Data, 0, getResponse.Length);
 
                         curlength = curlength + getResponse.Length;
                         param.offset = curlength;
-                        param.length = ((getResponse.TotalLength - curlength) > MAX_RECEIVABLE_FILE_SIZE) ? MAX_RECEIVABLE_FILE_SIZE : (getResponse.TotalLength - curlength);
+                        param.length = ((getResponse.ContentLength - curlength) > MAX_RECEIVABLE_FILE_SIZE) ? MAX_RECEIVABLE_FILE_SIZE : (getResponse.ContentLength - curlength);
 
-                        if (curlength >= getResponse.TotalLength)
+                        if (curlength >= getResponse.ContentLength)
                         {
                             bloop = false;
+                            getResponse.Data = memorystream.GetBuffer();
                         }
                     }
                     else
@@ -508,72 +506,7 @@ namespace NetGent_F
                 }
             }
 
-            return memorystream;
+            return getResponse;
         }
-#region HTTP
-        private string[] ParseHttpResponse(string response)
-        {
-            if (string.IsNullOrEmpty(response) == false)
-            {
-                string[] lines = response.Split(new string[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-
-                foreach (var line in lines)
-                {
-                    Console.WriteLine(line);
-                }
-
-                return lines;
-            }
-            else
-            {
-                return null;
-            }
-        }
-
-        private HttpCommand HandleHttpCommand(string[] lines)
-        {
-            HttpCommand httpCmd = new HttpCommand();
-
-            if (lines != null && lines.Length > 0)
-            {
-                foreach (var line in lines)
-                {
-                    Console.WriteLine($"HTTP - {line}");
-                    string[] words = line.Split(new string[] { " ", "\t" }, StringSplitOptions.None);
-
-                    if (words != null && words.Length > 0)
-                    {
-                        switch (words[0])
-                        {
-                            case "HEAD":
-                            case "GET":
-                                if (words.Length > 2)
-                                {
-                                    httpCmd.Command = words[0];
-                                    httpCmd.Param = words[1];
-                                    httpCmd.HttpVersion = words[2];
-                                }
-                                break;
-                            case "host:":
-                            case "Host:":
-                                if (words.Length > 1)
-                                {
-                                    httpCmd.Host = words[1];
-                                }
-                                break;
-                            case "Connection:":
-                            case "connection:":
-                                if (words.Length > 1)
-                                {
-                                    httpCmd.Connection = words[1];
-                                }
-                                break;
-                        }
-                    }
-                }
-            }
-            return httpCmd;
-        }
-#endregion
     }
 }

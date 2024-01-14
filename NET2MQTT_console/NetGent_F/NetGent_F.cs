@@ -23,6 +23,7 @@ using System.Text.Unicode;
 using Microsoft.Azure.EventHubs;
 using System.Collections.ObjectModel;
 using Microsoft.Azure.Devices.Client;
+using System.Collections.Specialized;
 
 namespace NetGent_F
 {
@@ -39,6 +40,7 @@ namespace NetGent_F
 
         private string _vesselIoTName;
         private Dictionary<string, TcpInfoF> tcpList;
+        private OrderedDictionary httpMsgList;
         private IoTFleet fleetTwin;
         private CancellationTokenSource taskTokenSrc;
         private bool isStarted;
@@ -53,6 +55,8 @@ namespace NetGent_F
             this.taskTokenSrc = new CancellationTokenSource();
             this.tcpList = new Dictionary<string, TcpInfoF>();
             this.TcpReceiveEvent = null;
+
+            this.httpMsgList = new OrderedDictionary();
 
             var connectionString = string.Format($"HostName={IoT_Settings.AzureHostName};SharedAccessKeyName={IoT_Settings.SASKeyName};SharedAccessKey={IoT_Settings.SASKey}");
 
@@ -153,27 +157,57 @@ namespace NetGent_F
             return RemoveTcpListener(ip, port);
         }
 
-        public void FleetTwin_IoTMessageEvent(object sender, IoTFleet.IoTMessageEventArgs e)
+        private void FleetTwin_IoTMessageEvent(object sender, IoTFleet.IoTMessageEventArgs e)
         {
             var net2mqtt = JsonConvert.DeserializeObject<Net2MqttMessage>(e.Message);
 
             if (net2mqtt != null)
             {
-                if (tcpList.TryGetValue(string.Format($"{net2mqtt.IP}:{net2mqtt.Port}"), out var tcpInfo) == true)
+                switch (net2mqtt.CMD)
                 {
-                    Byte[] bytesbuffer = System.Text.Encoding.ASCII.GetBytes(net2mqtt.Payload);
-                    try
-                    {
-                        Console.WriteLine("F: Write data into Stream");
-                        tcpInfo.Stream.Write(bytesbuffer, 0, bytesbuffer.Length);
-                    }
-                    catch (Exception ex)
-                    { }
+                    case "NET":
+                        {
+                            if (tcpList.TryGetValue(string.Format($"{net2mqtt.IP}:{net2mqtt.Port}"), out var tcpInfo) == true)
+                            {
+                                try
+                                {
+                                    Console.WriteLine("F: Write data into Stream");
+                                    tcpInfo.Stream.Write(net2mqtt.Payload, 0, net2mqtt.Length);
+                                }
+                                catch (Exception ex)
+                                { }
+                            }
+                            else
+                            {
+                                Console.WriteLine("IPPort is not found...");
+                            }
+
+                            break;
+                        }
+                    case "HTTP_GET":
+                        {
+                            if (this.httpMsgList.Contains(net2mqtt.Port) == false)
+                            {
+                                string msgString = Encoding.Default.GetString(net2mqtt.Payload);
+                                this.httpMsgList.Add(net2mqtt.Port, msgString);
+                                Console.WriteLine($"GET: cnt = {net2mqtt.Port}, length = {net2mqtt.Length}, string length = {msgString.Length}");
+                                if (net2mqtt.Port == 0)
+                                {
+                                    using (StreamWriter outputFile = new StreamWriter("1st_f.xml"))
+                                    {
+                                        outputFile.WriteLine(msgString);
+                                    }
+                                }
+
+                            }
+                            break;
+                        }
+
                 }
-                else
-                {
-                    Console.WriteLine("IPPort is not found...");
-                }
+            }
+            else
+            {
+                Console.WriteLine($"Invalid MQTT Data: {e.Message}");
             }
         }
 
@@ -258,8 +292,6 @@ namespace NetGent_F
 
         private async void TcpClientReceiver(TcpInfoF tcpInfo)
         {
-            int ret = 0;
-
             if (tcpInfo != null && tcpInfo.IsRun == true && tcpInfo.Stream != null)
             {
                 int ndata;
@@ -279,36 +311,30 @@ namespace NetGent_F
                         break;
                     }
 
-                    var rxstring = System.Text.Encoding.ASCII.GetString(buffer, 0, ndata);
+                    var rxstring = System.Text.Encoding.Default.GetString(buffer, 0, ndata);
                     if ( ndata > 0 && string.IsNullOrEmpty(rxstring) == false)
                     {
                         // Check if it is http response
-                        ret = await SendNet2MqttMessage(tcpInfo.IP, tcpInfo.Port, rxstring);
+                        int ret = await SendNet2MqttMessage(tcpInfo.IP, tcpInfo.Port, buffer, ndata);
 
                         if (this.TcpReceiveEvent != null)
                         {
-                            this.TcpReceiveEvent(this, new Net2MqttMessage(string.Empty, tcpInfo.IP, tcpInfo.Port, rxstring));
+                            this.TcpReceiveEvent(this, new Net2MqttMessage(string.Empty, tcpInfo.IP, tcpInfo.Port, buffer, ndata));
                         }
                     }
                 }
             }
-
-            Console.WriteLine("TcpClientReceiver finished");
         }
-
 
         private async void HttpListnerTask(HttpListener httpServer, string httpurl, CancellationToken ct)
         {
-            Console.WriteLine("HTTP LISTNER TASK");
             if (httpServer != null && string.IsNullOrEmpty(httpurl) == false)
             {
-                Console.WriteLine("HTTP LISTNER TASK Start...");
                 httpServer.AuthenticationSchemes = AuthenticationSchemes.Anonymous;
                 httpServer.Prefixes.Add(httpURL);
-
                 httpServer.Start();
 
-                while(true)
+                while (true)
                 {
                     HttpListenerContext ctx = await httpServer.GetContextAsync();
 
@@ -332,16 +358,17 @@ namespace NetGent_F
             if (httpctx != null && (req = httpctx.Request) != null)
             {
                 resp = httpctx.Response;
-
                 /// Call IoT Direct Call to get the data from the remote HTTP Server.
                 switch (req.HttpMethod)
                 {
                     case "HEAD":
                         {
                             Console.WriteLine($"HEAD Command");
-
-                            var response = await FleetTwin_GetFileSizeFromVessel("testVehicle01", "127.0.0.1:8080", req.RawUrl);
-
+#if false   // for local server test
+                            var response = await FleetTwin_GetFileSizeFromVessel("testVehicle01", "127.0.0.1:80", req.RawUrl);
+#else
+                            var response = await FleetTwin_GetFileSizeFromVessel("testVehicle01", "222.99.136.234:80", req.RawUrl);
+#endif
                             if (response != null)
                             {
                                 resp.ContentLength64 = response.ContentLength;
@@ -360,25 +387,26 @@ namespace NetGent_F
                                 resp.ContentLength64 = 0;
                             }
                             resp.Close();
-
                             break;
-
                         }
                     case "GET":
                         {
                             Console.WriteLine($"GET Command");
-                            var response = await FleetTwin_GetFileFromVessel("testVehicle01", "127.0.0.1:8080", req.RawUrl);                          
-
+#if false // For Local Server Test
+                            var response = await FleetTwin_GetFileFromVessel("testVehicle01", "127.0.0.1:80", req.RawUrl);
+#else
+                            var response = await FleetTwin_GetFileDataFromVessel("testVehicle01", "222.99.136.234:80", req.RawUrl);
+#endif
                             // Read the source file into a byte array.
                             if (response != null)
                             {
-                                resp.ContentLength64 = response.ContentLength;
                                 resp.StatusCode = response.StatusCode;
+                                resp.ContentLength64 = response.ContentLength;
+                                resp.ContentType = response.ContentType;
                                 resp.AddHeader("accept-ranges", response.AcceptRanges);
                                 resp.AddHeader("cache-control", response.CacheControl);
                                 resp.AddHeader("last-modified", response.LastModified);
                                 resp.AddHeader("etag", response.ETag);
-                                resp.ContentType = response.ContentType;
                                 resp.AddHeader("Connection", response.Connection);
                                 resp.AddHeader("Keep-Alive", response.KeepAlive);
 
@@ -389,7 +417,6 @@ namespace NetGent_F
                                 resp.StatusCode = 400;  // Bad Request
                                 resp.ContentLength64 = 0;
                             }
-
                             resp.Close();
                             break;
                         }
@@ -408,43 +435,28 @@ namespace NetGent_F
             }
         }
 
-
-        private async Task<int> SendNet2MqttMessage(string IP, int portNum, string payload)
+        private async Task<int> SendNet2MqttMessage(string IP, int portNum, byte[] payload, int length)
         {
             int ret = 0;
 
             if (fleetTwin != null)
             {
-                var netMsg = new Net2MqttMessage(string.Empty, IP, portNum, payload);
+                var netMsg = new Net2MqttMessage(string.Empty, IP, portNum, payload, length);
                 ret = await fleetTwin.SendTelemetry2Vessel(this._vesselIoTName, JsonConvert.SerializeObject(netMsg));
             }
 
             return ret;
         }
 
-        private async Task<int> SendNet2MqttMessage(string IP, int portNum, byte[] payload, int ndata)
-        {
-            int ret = 0;
-
-            if (fleetTwin != null)
-            {
-                var netMsg = new Net2MqttMessage(string.Empty, IP, portNum, System.Text.Encoding.Default.GetString(payload));
-                ret = await fleetTwin.SendTelemetry2Vessel(this._vesselIoTName, JsonConvert.SerializeObject(netMsg));
-
-                Console.WriteLine($"A vessel send a message to the fleet: {ret}");
-            }
-
-            return ret;
-        }
-
-        public async Task<HttpHeadResponse> FleetTwin_GetFileSizeFromVessel(string vesselname, string httpurl, string fileurl)
+        #region Direct2Call
+        private async Task<HttpHeadResponse> FleetTwin_GetFileSizeFromVessel(string vesselname, string httpurl, string fileurl)
         {
             HttpHeadResponse headResponse = null;
             var param = new GetFileSizeParam(httpurl, fileurl);
 
             string jsonparam = JsonConvert.SerializeObject(param);
 
-            (int retHead, string responseHead) = await DirectCall2Vessel(vesselname, "GetFileSize", jsonparam);
+            (int retHead, string responseHead) = await DirectCall2Vessel(vesselname, "DC_HEAD", jsonparam);
 
             if (string.IsNullOrEmpty(responseHead) == false)
             {
@@ -454,59 +466,36 @@ namespace NetGent_F
             return headResponse;
         }
 
-        public async Task<HttpGetResponse> FleetTwin_GetFileFromVessel(string vesselname, string httpurl, string fileurl)
+        internal async Task<HttpGetResponse> FleetTwin_GetFileDataFromVessel(string vesselname, string httpurl, string fileurl)
         {
-            bool bloop = true;
-            int curlength = 0;
-            int totalsize = int.MaxValue;
-            int len = (totalsize > MAX_RECEIVABLE_FILE_SIZE) ? MAX_RECEIVABLE_FILE_SIZE : totalsize;
-
-            var param = new GetFileDataParam(httpurl, fileurl, curlength, len);
+            var param = new GetFileDataParam(httpurl, fileurl, 0, 0);
 
             HttpGetResponse getResponse = null;
-            MemoryStream memorystream = null;
+            this.httpMsgList.Clear();
 
-            while (bloop == true)
+            string jsonparam = JsonConvert.SerializeObject(param);
+
+            // Direct Call in AZURE
+            (int retGet, string responseGet) = await DirectCall2Vessel(vesselname, "DC_GET", jsonparam);
+
+            if (retGet == 200 && string.IsNullOrEmpty(responseGet) == false)
             {
-                string jsonparam = JsonConvert.SerializeObject(param);
-
-                (int retGet, string responseGet) = await DirectCall2Vessel(vesselname, "GetFileData", jsonparam);
-
-                if (retGet == 200 && string.IsNullOrEmpty(responseGet) == false)
+                getResponse = JsonConvert.DeserializeObject<HttpGetResponse>(responseGet);
+                var msgEmulator = this.httpMsgList.GetEnumerator();
+                if (msgEmulator != null)
                 {
-                    getResponse = JsonConvert.DeserializeObject<HttpGetResponse>(responseGet);
-                    if (getResponse != null)
+                    string fullmessage = string.Empty;
+                    // Gather all messages from a vessel.
+                    while (msgEmulator.MoveNext())
                     {
-                        // when getting the total length, allocate the memory size
-                        if (memorystream == null)
-                        {
-                            memorystream = new MemoryStream(getResponse.ContentLength);
-                        }
-                        memorystream.Seek(curlength, SeekOrigin.Begin);
-                        memorystream.Write(getResponse.Data, 0, getResponse.Length);
-
-                        curlength = curlength + getResponse.Length;
-                        param.offset = curlength;
-                        param.length = ((getResponse.ContentLength - curlength) > MAX_RECEIVABLE_FILE_SIZE) ? MAX_RECEIVABLE_FILE_SIZE : (getResponse.ContentLength - curlength);
-
-                        if (curlength >= getResponse.ContentLength)
-                        {
-                            bloop = false;
-                            getResponse.Data = memorystream.GetBuffer();
-                        }
+                        fullmessage = fullmessage + msgEmulator.Value;
                     }
-                    else
-                    {
-                        break;
-                    }
-                }
-                else
-                {
-                    break;
+                    getResponse.Data = System.Text.Encoding.UTF8.GetBytes(fullmessage);
                 }
             }
 
             return getResponse;
         }
+        #endregion
     }
 }

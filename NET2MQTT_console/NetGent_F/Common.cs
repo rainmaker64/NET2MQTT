@@ -72,8 +72,6 @@ namespace NetGent_F
         public string Date { get; set; }
         public string Connection { get; set; }
         public string KeepAlive { get; set; }
-        public int Length { get; set; }
-        public int Offset { get; set; }
         public byte[] Data { get; set; }
     }
 

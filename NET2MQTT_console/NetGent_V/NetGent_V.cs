@@ -216,16 +216,16 @@ namespace NetGent_V
                     try
                     {
                         var ndata = tcpInfo.Stream.Read(buffer, 0, buffer.Length);
-                        var rxstring = System.Text.Encoding.ASCII.GetString(buffer, 0, ndata);
+                        var rxstring = System.Text.Encoding.Default.GetString(buffer, 0, ndata);
                         if (this.TcpReceiveEvent != null)
                         {
-                            this.TcpReceiveEvent(this, new Net2MqttMessage(string.Empty, tcpInfo.IP, tcpInfo.Port, rxstring));
+                            this.TcpReceiveEvent(this, new Net2MqttMessage(string.Empty, tcpInfo.IP, tcpInfo.Port, buffer, ndata));
                         }
 
 #if false
-                        var ret = await SendNet2MqttMessage(tcpInfo.IP, tcpInfo.Port, rxstring);
+                        var ret = await SendNet2MqttMessage(tcpInfo.IP, tcpInfo.Port,  buffer, ndata);
 #else
-                        var ret = await SendNet2MqttMessage(tcpInfo.IP, 130000, rxstring);
+                        var ret = await SendNet2MqttMessage(tcpInfo.IP, 130000, buffer, ndata);
 #endif
                     }
                     catch (IOException ex)
@@ -277,26 +277,13 @@ namespace NetGent_V
             return ret;
         }
 
-        private async Task<int> SendNet2MqttMessage(string IP, int portNum, string payload)
-        {
-            int ret = 0;
-
-            if (this.vesselTwin != null)
-            {
-                var netMsg = new Net2MqttMessage(string.Empty, IP, portNum, payload);
-                ret = await this.vesselTwin.PutTelemetryAsync(JsonConvert.SerializeObject(netMsg));
-            }
-
-            return ret;
-        }
-
         private async Task<int> SendNet2MqttMessage(string IP, int portNum, byte[] payload, int ndata)
         {
             int ret = 0;
 
             if (this.vesselTwin != null)
             {
-                var netMsg = new Net2MqttMessage(string.Empty, IP, portNum, System.Text.Encoding.Default.GetString(payload));
+                var netMsg = new Net2MqttMessage("NET", IP, portNum, payload, ndata);
                 ret = await this.vesselTwin.PutTelemetryAsync(JsonConvert.SerializeObject(netMsg));
             }
 
@@ -353,9 +340,8 @@ namespace NetGent_V
                 }
 
                 if (tcpInfo.IsRun == true) {
-                    Byte[] bytesbuffer = System.Text.Encoding.ASCII.GetBytes(net2mqtt.Payload);
                     try {
-                        tcpInfo.Stream.Write(bytesbuffer, 0, bytesbuffer.Length);
+                        tcpInfo.Stream.Write(net2mqtt.Payload, 0, net2mqtt.Length);
                     }
                     catch (Exception ex) {
                         tcpInfo.IsRun = false;

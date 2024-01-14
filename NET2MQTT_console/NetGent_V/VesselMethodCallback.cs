@@ -11,6 +11,8 @@ using Azure;
 using Microsoft.Azure.Devices;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
+using Microsoft.Azure.Devices.Client.Transport.Mqtt;
+using DotNetty.Common.Utilities;
 
 namespace NetGent_V
 {
@@ -18,15 +20,20 @@ namespace NetGent_V
     {
         private IoTVessel iot_vessel;
         private Dictionary<string, MethodCallback> vesselCallbacks;
+
         public VesselMethodCallback(IoTVessel iotvessel)
         {
             vesselCallbacks = new Dictionary<string, MethodCallback>();
-            vesselCallbacks.Add("GetFileSize", GetFileSize);
-            vesselCallbacks.Add("GetFileData", GetFileData);
+            vesselCallbacks.Add("DC_HEAD", HttpRequest_HEAD);
+            vesselCallbacks.Add("DC_GET", HttpRequest_GET);
 
             this.iot_vessel = iotvessel;
         }
 
+        /// <summary>
+        /// Install Method-Callback for AZURE Direct2Call
+        /// </summary>
+        /// <returns></returns>
         public int InstallMethodCallbacks()
         {
             int ret = 0;
@@ -43,79 +50,10 @@ namespace NetGent_V
             return ret;
         }
 
-        private async Task<MethodResponse> GetFileSize(MethodRequest methodRequest, object userContext)
+        private async Task<MethodResponse> HttpRequest_HEAD(MethodRequest methodRequest, object userContext)
         {
-            byte[] result = null;
             int statusCode = 500;
             MethodResponse methodResponse = null;
-
-            Console.WriteLine($"Method: GetFileSize() is called, {methodRequest.DataAsJson}");
-
-            if (string.IsNullOrEmpty(methodRequest.DataAsJson) == false)
-            {
-                var jobject = JObject.Parse(methodRequest.DataAsJson);
-
-                if (jobject != null)
-                {
-                    string url;
-                    string filename;
-
-                    try
-                    {
-                        url = jobject["url"].ToString();
-                        filename = jobject["file"].ToString();
-
-                    }
-                    catch (Exception ex)
-                    {
-                        return methodResponse;
-                    }
-
-                    HttpResponseMessage httpResponse = await SendHttpRequest(url, filename, HttpMethod.Head, string.Empty);
-
-                    if (httpResponse != null)
-                    {
-                        int length;
-                        var headResponse = new HttpHeadResponse();
-
-                        headResponse.StatusCode = (int)httpResponse.StatusCode;
-                        headResponse.FileURL = httpResponse.RequestMessage.RequestUri.AbsolutePath;
-                        Console.WriteLine($"File URL = {headResponse.FileURL}");
-                        headResponse.ContentType = httpResponse.Content.Headers.GetValues("Content-Type").ToList()[0];
-                        var contentlength_int = httpResponse.Content.Headers.GetValues("Content-Length").ToList()[0];
-                        headResponse.ContentLength = int.TryParse(contentlength_int, out length) == true ? length: 0;
-
-                        headResponse.LastModified = httpResponse.Content.Headers.GetValues("Last-Modified").ToList()[0];
-                        headResponse.AcceptRanges = httpResponse.Headers.GetValues("Accept-Ranges").ToList()[0];
-                        headResponse.CacheControl = httpResponse.Headers.GetValues("Cache-Control").ToList()[0];
-                        headResponse.ETag = httpResponse.Headers.GetValues("ETag").ToList()[0];
-                        headResponse.Date = httpResponse.Headers.GetValues("Date").ToList()[0];
-                        headResponse.Connection = httpResponse.Headers.GetValues("Connection").ToList()[0];
-                        headResponse.KeepAlive = httpResponse.Headers.GetValues("Keep-Alive").ToList()[0];
-
-                        result = System.Text.Encoding.ASCII.GetBytes(JsonConvert.SerializeObject(headResponse));
-                        statusCode = (int)httpResponse.StatusCode;
-                    }
-                    else
-                    {
-                        result = System.Text.Encoding.ASCII.GetBytes(string.Empty);
-                    }
-
-                    methodResponse = new MethodResponse(result, statusCode);
-                }
-            }
-            return methodResponse;
-        }
-
-        private async Task<MethodResponse> GetFileData(MethodRequest methodRequest, object userContext)
-        {
-            byte[] result = null;
-            int statusCode = 500;
-            HttpGetResponse getResponse = null;
-            HttpResponseMessage httpResponse;
-            MethodResponse methodResponse = null;
-
-            Console.WriteLine($"Method: GetFileData() is called, {methodRequest.DataAsJson}");
 
             if (string.IsNullOrEmpty(methodRequest.DataAsJson) == false)
             {
@@ -123,74 +61,93 @@ namespace NetGent_V
 
                 if (param != null)
                 {
-                    httpResponse = await SendHttpRequest(param.url, param.file, HttpMethod.Get, string.Empty);
+                    byte[] buffer = null;
+                    HttpResponseMessage httpResponse = await SendRequest2HttpServer(param.url, param.file, HttpMethod.Head, string.Empty);
 
                     if (httpResponse != null)
                     {
-                        /*
-                        Console.WriteLine($"==> {httpResponse.ToString()}");
-                        Console.WriteLine("length = " + httpResponse.Content.Headers.ContentLength.Value);
-                        Console.WriteLine("LastModified = " + httpResponse.Content.Headers.LastModified);
-                        */
-                        getResponse = new HttpGetResponse();
+                        var headResponse = CopyHttpResponse(httpResponse);
+                        buffer = System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(headResponse));
+                        statusCode = (int)httpResponse.StatusCode;
+                    }
+                    else
+                    {
+                        buffer = System.Text.Encoding.UTF8.GetBytes(string.Empty);
+                    }
 
-                        if (param.length == 0)
+                    methodResponse = new MethodResponse(buffer, statusCode);
+                }
+            }
+            return methodResponse;
+        }
+
+
+        private async Task<MethodResponse> HttpRequest_GET(MethodRequest methodRequest, object userContext)
+        {
+            byte[] result = null;
+            int statusCode = 500;
+            CopiedHttpResponse getResponse = null;
+            HttpResponseMessage httpResponse;
+            MethodResponse methodResponse = null;
+
+            if (string.IsNullOrEmpty(methodRequest.DataAsJson) == false)
+            {
+                var param = JsonConvert.DeserializeObject<GetFileDataParam>(methodRequest.DataAsJson);
+
+                if (param != null)
+                {
+                    httpResponse = await SendRequest2HttpServer(param.url, param.file, HttpMethod.Get, string.Empty);
+                    if (httpResponse != null)
+                    {
+                        var contentLength = httpResponse.Content.Headers.ContentLength.GetValueOrDefault();
+
+                        if (contentLength > 0)
                         {
-                            param.length = (int)httpResponse.Content.Headers.ContentLength.GetValueOrDefault();
-                        }
-
-                        if (param.length > 0)
-                        {
-                            int length;
-                            getResponse.Data = new byte[param.length];
-
-                            try
+                            getResponse = CopyHttpResponse(httpResponse);                           
+                            await Task.Run(async () =>
                             {
-                                var filestream = httpResponse.Content.ReadAsStream();
-                                filestream.Seek(param.offset, SeekOrigin.Begin);
-                                getResponse.Length = filestream.Read(getResponse.Data, 0, param.length);
-                                filestream.Close();
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine("Exception:" + ex.Message);
-                            }
+                                int bulkcnt = 0;
+                                int fileOffset = 0;
+                                int bufferSize = 32*1024;
+                                var buffer = new byte[bufferSize];
 
-                            getResponse.FileURL = httpResponse.RequestMessage.RequestUri.AbsolutePath;
-                            getResponse.StatusCode = (int)httpResponse.StatusCode;
-                            getResponse.ContentType = httpResponse.Content.Headers.GetValues("Content-Type").ToList()[0];
-                            var contentlength_int = httpResponse.Content.Headers.GetValues("Content-Length").ToList()[0];
-                            getResponse.ContentLength = int.TryParse(contentlength_int, out length) == true ? length : 0;
+                                using (var filestream = httpResponse.Content.ReadAsStream())
+                                {
+                                    int bulksize = 0;
+                                    string stringFileData = string.Empty;
+                                    while (fileOffset < contentLength)
+                                    {
+                                        try
+                                        {
+                                            filestream.Seek(fileOffset, SeekOrigin.Begin);
+                                            bulksize = filestream.Read(buffer, 0, bufferSize);
+                                            Array.Resize<byte>(ref buffer, bulksize);
 
-                            getResponse.LastModified = httpResponse.Content.Headers.GetValues("Last-Modified").ToList()[0];
-                            getResponse.AcceptRanges = httpResponse.Headers.GetValues("Accept-Ranges").ToList()[0];
-                            getResponse.CacheControl = httpResponse.Headers.GetValues("Cache-Control").ToList()[0];
-                            getResponse.ETag = httpResponse.Headers.GetValues("ETag").ToList()[0];
-                            getResponse.Date = httpResponse.Headers.GetValues("Date").ToList()[0];
-                            getResponse.Connection = httpResponse.Headers.GetValues("Connection").ToList()[0];
-                            getResponse.KeepAlive = httpResponse.Headers.GetValues("Keep-Alive").ToList()[0];
-
-                            getResponse.Offset = param.offset;
+                                            fileOffset = fileOffset + bulksize;
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            break;
+                                        }
+                                        finally
+                                        {
+                                            int retTel = await this.iot_vessel.PutTelemetryAsync(JsonConvert.SerializeObject(new Net2MqttMessage("HTTP_GET", string.Empty, bulkcnt++, buffer, bulksize)));
+                                        }
+                                    }
+                                }
+                            });
                         }
                         else
                         {
-                            int length;
-                            var contentlength_int = httpResponse.Content.Headers.GetValues("Content-Length").ToList()[0];
-
-                            getResponse.ContentLength = int.TryParse(contentlength_int, out length) == true ? length : 0;
-                            getResponse.LastModified = httpResponse.Content.Headers.GetValues("Last-Modified").ToList()[0];
-                            getResponse.Offset = 0;
-                            getResponse.Length = 0;
-                            getResponse.Data = null;
+                            getResponse = CopyHttpResponse(httpResponse);
                         }
-
-                        result = System.Text.Encoding.ASCII.GetBytes(JsonConvert.SerializeObject(getResponse));
+                        result = System.Text.Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(getResponse));
                         statusCode = (int)httpResponse.StatusCode;
                     }
+
                     try
                     {
                         methodResponse = new MethodResponse(result, statusCode);
-                        //Console.WriteLine("Return successfully methodResponse");
                     }
                     catch (Exception ex)
                     {
@@ -201,21 +158,26 @@ namespace NetGent_V
             return methodResponse;
         }
 
-        public async Task<HttpResponseMessage> SendHttpRequest(string serverUrl, string fileUrl, HttpMethod method, string request)
+
+        private async Task<HttpResponseMessage> SendRequest2HttpServer(string serverUrl, string fileUrl, HttpMethod method, string request)
         {
             HttpResponseMessage httpResponse = null;
 
-            string url = string.Format($@"http://{serverUrl}/{fileUrl}");
-            //url = "http://127.0.0.1:80/test.txt";
-
-            using (var client = new HttpClient())
+            using (var client = new HttpClient()) 
             {
                 client.DefaultRequestHeaders.Add("User-Agent", "NET2MQTT/1.0");
-                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                client.DefaultRequestHeaders.Add("Accept", "text/xml; charset=utf-8");
+                client.DefaultRequestHeaders.Add("Date", DateTime.Now.ToUniversalTime().ToString("r"));
 
-                httpResponse = await client.SendAsync(new HttpRequestMessage(method, url));
+                try
+                {
+                    httpResponse = await client.SendAsync(new HttpRequestMessage(method, string.Format($@"http://{serverUrl}/{fileUrl}")));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message);
+                }
             }
-
             if (httpResponse != null)
             {
                 Console.WriteLine("HTTP Response received");
@@ -224,8 +186,62 @@ namespace NetGent_V
             {
                 Console.WriteLine($"HTTP Response is null");
             }
-
             return httpResponse;
+        }
+
+        private CopiedHttpResponse CopyHttpResponse(HttpResponseMessage httpResponse)
+        {
+            int length = 0;
+            var copiedHttpResponse = new CopiedHttpResponse();
+
+            if (httpResponse.Content != null)
+            {
+                string strLeng = string.Empty;
+
+                // Status Code
+                copiedHttpResponse.StatusCode = (int)httpResponse.StatusCode;
+
+                // Content-Length
+                var strLength = ExtractValueFromHttpContentHeader(httpResponse.Content.Headers, "Content-Length");
+                copiedHttpResponse.ContentLength = int.TryParse(strLength, out length) == true ? length : 0;
+
+                // file URL
+                if (httpResponse.RequestMessage.RequestUri != null &&
+                    httpResponse.RequestMessage.RequestUri.IsAbsoluteUri == true)
+                {
+                    copiedHttpResponse.FileURL = httpResponse.RequestMessage.RequestUri.AbsolutePath;
+                }
+                else
+                {
+                    copiedHttpResponse.FileURL = string.Empty;
+                }
+                
+                copiedHttpResponse.ContentType = ExtractValueFromHttpContentHeader(httpResponse.Content.Headers, "Content-Type"); // Conent-Type
+                copiedHttpResponse.LastModified = ExtractValueFromHttpContentHeader(httpResponse.Content.Headers, "Last-Modified"); // Last-Modified                
+                copiedHttpResponse.AcceptRanges = ExtractValueFromHttpContentHeader(httpResponse.Content.Headers, "Accept-Ranges"); // Accept-Ranges                
+                copiedHttpResponse.CacheControl = ExtractValueFromHttpContentHeader(httpResponse.Content.Headers, "Cache-Control"); // Cache-Control
+                copiedHttpResponse.ETag = ExtractValueFromHttpContentHeader(httpResponse.Content.Headers, "ETag"); // ETag
+                copiedHttpResponse.Date = ExtractValueFromHttpContentHeader(httpResponse.Content.Headers, "Date"); // Date
+                copiedHttpResponse.Connection = ExtractValueFromHttpContentHeader(httpResponse.Content.Headers, "Connection"); // Connection
+                copiedHttpResponse.KeepAlive = ExtractValueFromHttpContentHeader(httpResponse.Content.Headers, "Keep-Alive"); // Keep-Alive
+            }
+
+            return copiedHttpResponse;
+        }
+
+        private string ExtractValueFromHttpContentHeader(HttpContentHeaders headers, string type)
+        {
+            string value = string.Empty;
+
+            try
+            {
+                var list = headers.GetValues(type);
+                value = list.First();
+            }
+            catch (Exception ex)
+            { }
+
+            return value;
         }
     }
 }

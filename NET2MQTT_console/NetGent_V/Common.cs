@@ -16,7 +16,8 @@ namespace NetGent_V
         public bool IsRun { get; set; }
         public string IP { get; set; }
         public int Port { get; set; }
-        public TcpInfoV(string ip, int port)
+        public int UID { get; set; }
+        public TcpInfoV(string ip, int port, int uID)
         {
             this.Stream = null;
             this.IsRun = false;
@@ -26,6 +27,7 @@ namespace NetGent_V
             IPAddress serverAddr = IPAddress.Parse(ip);
             this.IPServerEP = new IPEndPoint(serverAddr, port);
             this.Client = new TcpClient();
+            this.UID = uID;
         }
     }
 

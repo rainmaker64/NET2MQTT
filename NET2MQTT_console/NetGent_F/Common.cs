@@ -15,6 +15,7 @@ namespace NetGent_F
         public bool IsRun { get; set; }
         public string IP { get; set; }
         public int Port { get; set; }
+        public int UID { get; set; }
         public TcpInfoF()
         {
             this.Listener = null;
@@ -22,6 +23,7 @@ namespace NetGent_F
             this.Stream = null;
             this.IsRun = false;
             this.IP = string.Empty;
+            this.UID = 0;
             this.Port = -1;
         }
     }

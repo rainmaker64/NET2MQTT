@@ -10,7 +10,7 @@ netagent_vessel.Add_IoTMessageEvent(VesselTwin_IoTMessageEvent);
 netagent_vessel.TcpReceiveEvent += VesselTwin_TcpRxEvent;
 netagent_vessel.Start();
 
-var netagent_methods = new VesselMethodCallback(netagent_vessel.GetIoTVessel());
+var netagent_methods = new VesselMethodCallback(netagent_vessel.GetIoTVessel(), netagent_vessel.GetLogIF);
 int nMethods = netagent_methods.InstallMethodCallbacks();
 Console.WriteLine($"number of methods: {nMethods}");
 
@@ -20,10 +20,10 @@ Console.ReadLine();
 
 void VesselTwin_IoTMessageEvent(object sender, IoTVessel.IoTMessageEventArgs e)
 {
-    Console.WriteLine($"\tV: The FLEET sent {e.Message}");
+    //Console.WriteLine($"\tV: The FLEET sent {e.Message}");
 }
 
 void VesselTwin_TcpRxEvent(object sender, Net2MqttMessage e)
 {
-    Console.WriteLine($"V: Receive Data from IP {e.IP} PORT {e.Port}, PAYLOAD: {e.Payload} ");
+    //Console.WriteLine($"V: Receive Data from IP {e.IP} PORT {e.Port}, PAYLOAD: {e.Payload} ");
 }

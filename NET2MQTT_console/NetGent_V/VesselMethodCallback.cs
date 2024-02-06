@@ -13,21 +13,24 @@ using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 using Microsoft.Azure.Devices.Client.Transport.Mqtt;
 using DotNetty.Common.Utilities;
+using log4net;
 
 namespace NetGent_V
 {
     internal class VesselMethodCallback
     {
+        private ILog log;
         private IoTVessel iot_vessel;
         private Dictionary<string, MethodCallback> vesselCallbacks;
 
-        public VesselMethodCallback(IoTVessel iotvessel)
+        public VesselMethodCallback(IoTVessel iotvessel, ILog _log = null)
         {
             vesselCallbacks = new Dictionary<string, MethodCallback>();
             vesselCallbacks.Add("DC_HEAD", HttpRequest_HEAD);
             vesselCallbacks.Add("DC_GET", HttpRequest_GET);
 
             this.iot_vessel = iotvessel;
+            this.log = _log;
         }
 
         /// <summary>
@@ -55,6 +58,9 @@ namespace NetGent_V
             int statusCode = 500;
             MethodResponse methodResponse = null;
 
+            log.Info("*** HTTP HEAD REQUUEST ***");
+            log.Info($"   data: {methodRequest.DataAsJson}");
+
             if (string.IsNullOrEmpty(methodRequest.DataAsJson) == false)
             {
                 var param = JsonConvert.DeserializeObject<GetFileDataParam>(methodRequest.DataAsJson);
@@ -78,6 +84,11 @@ namespace NetGent_V
                     methodResponse = new MethodResponse(buffer, statusCode);
                 }
             }
+            else
+            {
+                log.Error("No Data Available");
+            }
+
             return methodResponse;
         }
 
@@ -89,6 +100,9 @@ namespace NetGent_V
             CopiedHttpResponse getResponse = null;
             HttpResponseMessage httpResponse;
             MethodResponse methodResponse = null;
+
+            log.Info("*** HTTP GET REQUUEST ***");
+            log.Info($"   data: {methodRequest.DataAsJson}");
 
             if (string.IsNullOrEmpty(methodRequest.DataAsJson) == false)
             {
@@ -131,7 +145,7 @@ namespace NetGent_V
                                         }
                                         finally
                                         {
-                                            int retTel = await this.iot_vessel.PutTelemetryAsync(JsonConvert.SerializeObject(new Net2MqttMessage("HTTP_GET", string.Empty, bulkcnt++, buffer, bulksize)));
+                                            int retTel = await this.iot_vessel.PutTelemetryAsync(JsonConvert.SerializeObject(new Net2MqttMessage("HTTP_GET", string.Empty, bulkcnt++, 0, buffer, bulksize)));
                                         }
                                     }
                                 }
@@ -151,9 +165,13 @@ namespace NetGent_V
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine(ex.Message);
+                        log.Error(ex.Message);
                     }
                 }
+            }
+            else
+            {
+                log.Error("No Data Available");
             }
             return methodResponse;
         }
@@ -171,21 +189,27 @@ namespace NetGent_V
 
                 try
                 {
+                    log.Info($"Send HTTP Request, {method} to {string.Format($@"http://{serverUrl}/{fileUrl}")}");
+
                     httpResponse = await client.SendAsync(new HttpRequestMessage(method, string.Format($@"http://{serverUrl}/{fileUrl}")));
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine(ex.Message);
+                    log.Error(ex.Message);
                 }
             }
             if (httpResponse != null)
             {
-                Console.WriteLine("HTTP Response received");
+                log.Info($"*** RESPONSE of {method.ToString()} ***");
+                log.Info($"   Status Code: {httpResponse.StatusCode}");
+                log.Info($"   Last-Modified: {httpResponse.Content.Headers.LastModified}");
+                log.Info($"   Content-Length: {httpResponse.Content.Headers.ContentLength}");
             }
             else
             {
-                Console.WriteLine($"HTTP Response is null");
+                log.Error("Response is null");
             }
+
             return httpResponse;
         }
 
